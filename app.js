@@ -6,11 +6,12 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // --- GLOBAL STATE ---
 let db = {
     students: [], staff: [], inventory: [], ledger: [], 
-    announcements: [], timetable: [], assignments: [], auditLog: []
+    announcements: [], timetable: [], assignments: [], auditLog: [], attendance: []
 };
 
 let currentPortal = "admin";
 let currentPage = "dashboard";
+let attendanceType = "student"; // Used to toggle attendance between students and staff
 
 // --- HELPER FUNCTIONS ---
 function fmt(amount) { return 'Rs. ' + amount.toLocaleString('en-PK'); }
@@ -74,6 +75,9 @@ async function loadDB() {
         const { data: assignments, error: e7 } = await supabaseClient.from('assignments').select('*');
         if (e7) throw e7;
 
+        const { data: attendance, error: e8 } = await supabaseClient.from('attendance_log').select('*');
+        if (e8) throw e8;
+
         db.students = students || [];
         db.staff = staff || [];
         db.inventory = inventory || [];
@@ -81,6 +85,7 @@ async function loadDB() {
         db.announcements = announcements || [];
         db.timetable = timetable || [];
         db.assignments = assignments || [];
+        db.attendance = attendance || [];
         
         await fetchAuditLog();
         navigateTo(currentPage);
@@ -92,6 +97,7 @@ async function loadDB() {
                 <div class="panel-body">
                     <p><strong>Error Details:</strong></p>
                     <pre style="background: #f3f4f6; padding: 15px; border-radius: 8px; white-space: pre-wrap; font-family: monospace;">${error.message}</pre>
+                    <p>Make sure you ran the latest SQL code to create the attendance table and add the salary column!</p>
                 </div>
             </div>
         `;
@@ -113,15 +119,15 @@ async function fetchAuditLog() {
 const menus = {
     admin: [
         { cat: "Main", items: [{ id: "dashboard", name: "Dashboard" }, { id: "announcements", name: "Announcements" }] },
-        { cat: "Finance & Ops", items: [{ id: "finance", name: "Finance & Expenses" }, { id: "inventory", name: "Inventory" }] },
-        { cat: "Academics & HR", items: [{ id: "students", name: "Student Info (SIS)" }, { id: "staff", name: "Staff & HR" }, { id: "academics", name: "Gradebook & LMS" }, { id: "timetable", name: "Timetable" }] },
+        { cat: "Finance & Ops", items: [{ id: "finance", name: "Finance & Expenses" }, { id: "payroll", name: "Payroll & Salary" }, { id: "inventory", name: "Inventory" }] },
+        { cat: "Academics & HR", items: [{ id: "students", name: "Student Info (SIS)" }, { id: "staff", name: "Staff & HR" }, { id: "attendance", name: "Attendance" }, { id: "academics", name: "Gradebook & LMS" }, { id: "timetable", name: "Timetable" }] },
         { cat: "System", items: [{ id: "audit", name: "Audit Trail" }] }
     ],
     teacher: [
-        { cat: "Teaching", items: [{ id: "dashboard", name: "My Classes" }, { id: "timetable", name: "My Timetable" }, { id: "academics", name: "Gradebook & LMS" }] }
+        { cat: "Teaching", items: [{ id: "dashboard", name: "My Classes" }, { id: "timetable", name: "My Timetable" }, { id: "attendance", name: "Take Attendance" }, { id: "academics", name: "Gradebook & LMS" }] }
     ],
     parent: [
-        { cat: "My Child", items: [{ id: "dashboard", name: "Overview & Notices" }, { id: "finance", name: "Fee Challans" }, { id: "academics", name: "Report Card" }, { id: "timetable", name: "Class Schedule" }] }
+        { cat: "My Child", items: [{ id: "dashboard", name: "Overview & Notices" }, { id: "finance", name: "Fee Challans" }, { id: "attendance", name: "My Child Attendance" }, { id: "academics", name: "Report Card" }, { id: "timetable", name: "Class Schedule" }] }
     ]
 };
 
@@ -151,11 +157,16 @@ function navigateTo(pageId) {
     
     if (pageId === "dashboard") content.innerHTML = getDashboardHTML();
     else if (pageId === "finance") content.innerHTML = getFinanceHTML();
+    else if (pageId === "payroll") content.innerHTML = getPayrollHTML();
     else if (pageId === "inventory") content.innerHTML = getInventoryHTML();
     else if (pageId === "students") content.innerHTML = getStudentsHTML();
     else if (pageId === "staff") content.innerHTML = getStaffHTML();
+    else if (pageId === "attendance") content.innerHTML = getAttendanceHTML();
     else if (pageId === "academics") content.innerHTML = getAcademicsHTML();
-    else if (pageId === "timetable") content.innerHTML = getTimetableHTML();
+    else if (pageId === "timetable") {
+        content.innerHTML = getTimetableHTML();
+        renderTimetableTable();
+    }
     else if (pageId === "announcements") content.innerHTML = getAnnouncementsHTML();
     else if (pageId === "audit") content.innerHTML = getAuditHTML();
 }
@@ -213,6 +224,58 @@ function getFinanceHTML() {
     `;
 }
 
+// NEW: PAYROLL HTML
+function getPayrollHTML() {
+    let totalGross = db.staff.reduce((a,b) => a + (b.salary || 0), 0);
+    let totalDeductions = db.staff.length * 2000; // Flat Rs. 2000 tax deduction per staff for demo
+    let totalNet = totalGross - totalDeductions;
+
+    return `
+        <div class="grid-4">
+            <div class="stat-card"><div class="label">Total Staff</div><div class="value">${db.staff.length}</div></div>
+            <div class="stat-card"><div class="label">Gross Payroll</div><div class="value">${fmt(totalGross)}</div></div>
+            <div class="stat-card"><div class="label">Tax Deductions</div><div class="value" style="color:var(--danger)">${fmt(totalDeductions)}</div></div>
+            <div class="stat-card"><div class="label">Net Payable</div><div class="value" style="color:var(--success)">${fmt(totalNet)}</div></div>
+        </div>
+        <div class="panel">
+            <div class="panel-header">
+                <h3>Salary Disbursement - ${new Date().toLocaleDateString('en-PK', { month: 'long', year: 'numeric' })}</h3>
+                <button class="btn btn-success btn-sm" onclick="runPayroll(${totalNet})">Run Payroll & Post to Ledger</button>
+            </div>
+            <table><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Base Salary</th><th>Tax Deducted</th><th>Net Salary</th><th>Status</th></tr></thead><tbody>
+                ${db.staff.map(s => {
+                    let net = (s.salary || 0) - 2000;
+                    return `<tr><td>${s.id}</td><td style="font-weight:600;">${s.name}</td><td>${s.role}</td><td>${fmt(s.salary || 0)}</td><td style="color:var(--danger)">- ${fmt(2000)}</td><td style="font-weight:600;">${fmt(net)}</td><td><span class="badge badge-warning">Pending</span></td></tr>`;
+                }).join('') || '<tr><td colspan="7" style="text-align:center;">No staff members found.</td></tr>'}
+            </tbody></table>
+        </div>
+    `;
+}
+
+// NEW: RUN PAYROLL ACTION
+async function runPayroll(amount) {
+    if (amount <= 0) return showToast("No salary to disburse.", true);
+    if(!confirm(`Confirm disbursing ${fmt(amount)} for payroll? This will be logged as an expense.`)) return;
+    
+    try {
+        const { error } = await supabaseClient.from('ledger').insert([{ 
+            id: Date.now(), 
+            date: new Date().toLocaleDateString(), 
+            desc: `Monthly Payroll Disbursement - ${new Date().toLocaleDateString('en-PK', { month: 'long' })}`, 
+            type: "Expense", 
+            amount: amount 
+        }]);
+        if (error) throw error;
+        
+        await logAction(`Ran payroll for ${db.staff.length} staff. Total: ${fmt(amount)}`);
+        await loadDB();
+        navigateTo('payroll');
+        showToast("Payroll processed and logged successfully!");
+    } catch (err) {
+        showToast("Error: " + err.message, true);
+    }
+}
+
 function getInventoryHTML() {
     return `
         <div class="panel">
@@ -220,7 +283,7 @@ function getInventoryHTML() {
             <div class="panel-body">
                 <div class="search-bar"><input type="text" id="invSearch" placeholder="Search items..." onkeyup="renderInvTable()"></div>
                 <table id="invTable"><thead><tr><th>Item</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                    ${db.inventory.map(i => `<tr><td>${i.item}</td><td>${i.stock}</td><td><span class="badge ${i.status==='In Stock'?'badge-success':'badge-danger'}">${i.status}</span></td><td><button class="btn btn-danger btn-sm" onclick="deleteItem('${i.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No inventory items found.</td></tr>'}
+                    ${db.inventory.map(i => `<tr><td>${i.item}</td><td>${i.stock}</td><td><span class="badge ${i.status==='In Stock'?'badge-success':'badge-danger'}">${i.status}</span></td><td><button class="btn btn-ghost btn-sm" onclick="openInventoryEditModal('${i.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteItem('${i.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No inventory items found.</td></tr>'}
                 </tbody></table>
             </div>
         </div>
@@ -229,13 +292,11 @@ function getInventoryHTML() {
 function renderInvTable() {
     let term = document.getElementById('invSearch').value.toLowerCase();
     let filtered = db.inventory.filter(i => i.item.toLowerCase().includes(term));
-    document.querySelector('#invTable tbody').innerHTML = filtered.map(i => `<tr><td>${i.item}</td><td>${i.stock}</td><td><span class="badge ${i.status==='In Stock'?'badge-success':'badge-danger'}">${i.status}</span></td><td><button class="btn btn-danger btn-sm" onclick="deleteItem('${i.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No items match your search.</td></tr>';
+    document.querySelector('#invTable tbody').innerHTML = filtered.map(i => `<tr><td>${i.item}</td><td>${i.stock}</td><td><span class="badge ${i.status==='In Stock'?'badge-success':'badge-danger'}">${i.status}</span></td><td><button class="btn btn-ghost btn-sm" onclick="openInventoryEditModal('${i.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteItem('${i.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No items match your search.</td></tr>';
 }
 
 function getStudentsHTML() {
-    // Dynamically get unique grades from DB for the filter dropdown
     let uniqueGrades = [...new Set(db.students.map(s => s.grade))];
-    
     return `
         <div class="panel">
             <div class="panel-header"><h3>Student Information System</h3>
@@ -270,11 +331,110 @@ function getStaffHTML() {
     return `
         <div class="panel">
             <div class="panel-header"><h3>Staff & HR Management</h3><button class="btn btn-primary btn-sm" onclick="openStaffModal()">Onboard Staff</button></div>
-            <table><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                ${db.staff.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.role}</td><td><span class="badge badge-info">${s.status}</span></td><td><button class="btn btn-danger btn-sm" onclick="deleteStaff('${s.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;">No staff members found.</td></tr>'}
+            <table><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Salary</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+                ${db.staff.map(s => `<tr><td>${s.id}</td><td style="font-weight:600;">${s.name}</td><td>${s.role}</td><td>${fmt(s.salary || 0)}</td><td><span class="badge badge-info">${s.status}</span></td><td><button class="btn btn-danger btn-sm" onclick="deleteStaff('${s.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;">No staff members found.</td></tr>'}
             </tbody></table>
         </div>
     `;
+}
+
+// NEW: ATTENDANCE HTML
+function getAttendanceHTML() {
+    if (currentPortal === 'parent') {
+        let childAttendance = db.attendance.filter(a => a.person_name === "Ali Raza");
+        return `
+            <div class="panel">
+                <div class="panel-header"><h3>Ali Raza's Attendance History</h3></div>
+                <table><thead><tr><th>Date</th><th>Status</th></tr></thead><tbody>
+                    ${childAttendance.map(a => `<tr><td>${a.date}</td><td><span class="badge ${a.status==='Present'?'badge-success':a.status==='Late'?'badge-warning':'badge-danger'}">${a.status}</span></td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center;">No attendance recorded yet.</td></tr>'}
+                </tbody></table>
+            </div>
+        `;
+    }
+
+    let today = new Date().toLocaleDateString('en-CA');
+    let list = attendanceType === 'student' ? db.students : db.staff;
+    let alreadyMarked = db.attendance.filter(a => a.date === today && a.person_type === attendanceType);
+
+    return `
+        <div class="panel">
+            <div class="panel-header">
+                <h3>Mark Daily Attendance</h3>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn ${attendanceType === 'student' ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="switchAttendanceType('student')">Students</button>
+                    <button class="btn ${attendanceType === 'staff' ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="switchAttendanceType('staff')">Staff</button>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p style="margin-bottom: 16px;"><strong>Date:</strong> ${new Date().toLocaleDateString()} | <strong>Total ${attendanceType}s:</strong> ${list.length} | <strong>Already Marked Today:</strong> ${alreadyMarked.length}</p>
+                <table id="attTable"><thead><tr><th>Name</th><th>ID</th><th>Mark Status</th></tr></thead><tbody>
+                    ${list.map(p => {
+                        let record = alreadyMarked.find(a => a.person_id === p.id);
+                        let currentStatus = record ? record.status : 'Present';
+                        return `<tr>
+                            <td style="font-weight:600;">${p.name}</td>
+                            <td>${p.id}</td>
+                            <td>
+                                <select class="form-control" id="att_${p.id}" style="width: 150px;" ${record ? 'disabled' : ''}>
+                                    <option value="Present" ${currentStatus === 'Present' ? 'selected' : ''}>Present</option>
+                                    <option value="Absent" ${currentStatus === 'Absent' ? 'selected' : ''}>Absent</option>
+                                    <option value="Late" ${currentStatus === 'Late' ? 'selected' : ''}>Late</option>
+                                </select>
+                            </td>
+                        </tr>`;
+                    }).join('') || `<tr><td colspan="3" style="text-align:center;">No ${attendanceType}s found.</td></tr>`}
+                </tbody></table>
+                ${list.length > 0 ? `<button class="btn btn-success" style="margin-top: 16px;" onclick="saveAttendance()">Save Today's Attendance</button>` : ''}
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-header"><h3>Attendance History (Recent)</h3></div>
+            <table><thead><tr><th>Date</th><th>Name</th><th>Type</th><th>Status</th></tr></thead><tbody>
+                ${db.attendance.slice().reverse().slice(0, 15).map(a => `<tr><td>${a.date}</td><td>${a.person_name}</td><td>${a.person_type}</td><td><span class="badge ${a.status==='Present'?'badge-success':a.status==='Late'?'badge-warning':'badge-danger'}">${a.status}</span></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No history yet.</td></tr>'}
+            </tbody></table>
+        </div>
+    `;
+}
+
+function switchAttendanceType(type) {
+    attendanceType = type;
+    navigateTo('attendance');
+}
+
+// NEW: SAVE ATTENDANCE ACTION
+async function saveAttendance() {
+    let today = new Date().toLocaleDateString();
+    let todayISO = new Date().toLocaleDateString('en-CA');
+    let list = attendanceType === 'student' ? db.students : db.staff;
+    
+    let recordsToInsert = [];
+    for (let p of list) {
+        let selectEl = document.getElementById(`att_${p.id}`);
+        if (selectEl && !selectEl.disabled) {
+            recordsToInsert.push({
+                id: Date.now() + Math.floor(Math.random() * 1000),
+                date: todayISO,
+                person_id: p.id,
+                person_name: p.name,
+                person_type: attendanceType,
+                status: selectEl.value
+            });
+        }
+    }
+
+    if (recordsToInsert.length === 0) return showToast("No new attendance to save.", true);
+
+    try {
+        const { error } = await supabaseClient.from('attendance_log').insert(recordsToInsert);
+        if (error) throw error;
+        
+        await logAction(`Marked attendance for ${recordsToInsert.length} ${attendanceType}s.`);
+        await loadDB();
+        navigateTo('attendance');
+        showToast("Attendance saved successfully!");
+    } catch (err) {
+        showToast("Error: " + err.message, true);
+    }
 }
 
 function getAcademicsHTML() {
@@ -303,14 +463,66 @@ function getAcademicsHTML() {
 }
 
 function getTimetableHTML() {
+    let uniqueClasses = [...new Set(db.timetable.map(t => t.class))].sort();
+    let isAdmin = currentPortal === 'admin';
+    
     return `
         <div class="panel">
-            <div class="panel-header"><h3>Dynamic Timetable</h3>${currentPortal === 'admin' ? `<button class="btn btn-primary btn-sm" onclick="openTimetableModal()">Add Slot</button>` : ''}</div>
-            <table><thead><tr><th>Day</th><th>Time</th><th>Class</th><th>Subject</th><th>Teacher</th>${currentPortal === 'admin' ? '<th>Action</th>' : ''}</tr></thead><tbody>
-                ${db.timetable.map(t => `<tr><td>${t.day}</td><td>${t.time}</td><td>${t.class}</td><td>${t.subject}</td><td>${t.teacher}</td>${currentPortal === 'admin' ? `<td><button class="btn btn-danger btn-sm" onclick="deleteSlot('${t.id}')">Delete</button></td>` : ''}</tr>`).join('') || '<tr><td colspan="6" style="text-align:center;">No timetable slots added yet.</td></tr>'}
-            </tbody></table>
+            <div class="panel-header">
+                <h3>Dynamic Timetable</h3>
+                ${isAdmin ? `<button class="btn btn-primary btn-sm" onclick="openTimetableModal()">Add Slot</button>` : ''}
+            </div>
+            <div class="panel-body">
+                <div class="search-bar">
+                    <label style="font-weight: 600; align-self: center;">Filter by Class:</label>
+                    <select id="ttClassFilter" onchange="renderTimetableTable()">
+                        <option value="">All Classes</option>
+                        ${uniqueClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
+                    </select>
+                </div>
+                <table id="ttTable">
+                    <thead>
+                        <tr>
+                            <th>Day</th>
+                            <th>Time</th>
+                            <th>Class</th>
+                            <th>Subject</th>
+                            <th>Teacher</th>
+                            ${isAdmin ? '<th>Actions</th>' : ''}
+                        </tr>
+                    </thead>
+                    <tbody id="ttTableBody"></tbody>
+                </table>
+            </div>
         </div>
     `;
+}
+
+function renderTimetableTable() {
+    let selectedClass = document.getElementById('ttClassFilter') ? document.getElementById('ttClassFilter').value : "";
+    let filtered = selectedClass ? db.timetable.filter(t => t.class === selectedClass) : db.timetable;
+    let isAdmin = currentPortal === 'admin';
+    let sortDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    
+    filtered.sort((a, b) => {
+        let dayDiff = sortDays.indexOf(a.day) - sortDays.indexOf(b.day);
+        if (dayDiff !== 0) return dayDiff;
+        return a.time.localeCompare(b.time);
+    });
+
+    let tbody = document.getElementById('ttTableBody');
+    if (!tbody) return; 
+
+    tbody.innerHTML = filtered.map(t => `
+        <tr>
+            <td>${t.day}</td>
+            <td>${t.time}</td>
+            <td>${t.class}</td>
+            <td>${t.subject}</td>
+            <td>${t.teacher}</td>
+            ${isAdmin ? `<td><button class="btn btn-ghost btn-sm" onclick="openTimetableEditModal('${t.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteSlot('${t.id}')">Delete</button></td>` : ''}
+        </tr>
+    `).join('') || `<tr><td colspan="${isAdmin ? 6 : 5}" style="text-align:center;">No timetable slots found for this class.</td></tr>`;
 }
 
 function getAnnouncementsHTML() {
@@ -364,6 +576,7 @@ async function saveTransaction(type) {
     }
 }
 
+// --- INVENTORY ACTIONS ---
 function openInventoryModal() {
     openModal('Add Inventory Item', `
         <div class="form-group"><label>Item Name</label><input class="form-control" id="invName"></div>
@@ -388,6 +601,39 @@ async function saveInventory() {
         showToast("Error: " + err.message, true);
     }
 }
+
+function openInventoryEditModal(id) {
+    let item = db.inventory.find(i => i.id === id);
+    if(!item) return;
+    openModal('Edit Inventory Item', `
+        <div class="form-group"><label>Item Name</label><input class="form-control" id="editInvName" value="${item.item}"></div>
+        <div class="form-group"><label>Stock Quantity</label><input type="number" class="form-control" id="editInvStock" value="${item.stock}"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="saveInventoryEdit('${id}')">Update Item</button>
+    `);
+}
+async function saveInventoryEdit(id) {
+    let name = document.getElementById('editInvName').value;
+    let stock = parseInt(document.getElementById('editInvStock').value);
+    if(!name || isNaN(stock) || stock < 0) return showToast("Invalid input", true);
+    
+    try {
+        const { error } = await supabaseClient.from('inventory').update({ 
+            item: name, 
+            stock: stock, 
+            status: stock < 10 ? "Low Stock" : "In Stock" 
+        }).eq('id', id);
+        
+        if (error) throw error;
+        
+        await logAction(`Updated inventory item: ${name} (New Stock: ${stock})`);
+        closeModal(); 
+        await loadDB();
+        showToast("Item updated successfully!");
+    } catch (err) {
+        showToast("Error: " + err.message, true);
+    }
+}
+
 async function deleteItem(id) { 
     if(!confirm("Are you sure you want to delete this item?")) return;
     try {
@@ -402,6 +648,7 @@ async function deleteItem(id) {
     }
 }
 
+// --- STUDENT ACTIONS ---
 function openStudentModal() {
     openModal('Admit New Student', `
         <div class="form-group"><label>Student Name</label><input class="form-control" id="stuName" placeholder="Full Name"></div>
@@ -450,23 +697,26 @@ async function deleteStudent(id) {
     }
 }
 
+// --- STAFF ACTIONS ---
 function openStaffModal() {
     openModal('Staff Onboarding', `
         <div class="form-group"><label>Staff Name</label><input class="form-control" id="stfName"></div>
         <div class="form-group"><label>Role</label><select class="form-control" id="stfRole"><option>Teacher</option><option>Admin</option><option>Accountant</option><option>Janitor</option><option>Security</option></select></div>
+        <div class="form-group"><label>Base Salary (Rs.)</label><input type="number" class="form-control" id="stfSalary" placeholder="e.g., 45000"></div>
         <button class="btn btn-primary" style="width:100%" onclick="saveStaff()">Onboard</button>
     `);
 }
 async function saveStaff() {
     let name = document.getElementById('stfName').value;
     let role = document.getElementById('stfRole').value;
+    let salary = parseInt(document.getElementById('stfSalary').value) || 0;
     if(!name) return showToast("Name required", true);
     
     try {
-        const { error } = await supabaseClient.from('staff').insert([{ id: 'EMP-'+Date.now(), name, role, status: "Present", leavebalance: 15 }]);
+        const { error } = await supabaseClient.from('staff').insert([{ id: 'EMP-'+Date.now(), name, role, status: "Present", leavebalance: 15, salary }]);
         if (error) throw error;
         
-        await logAction(`Onboarded staff: ${name} as ${role}`);
+        await logAction(`Onboarded staff: ${name} as ${role} (Salary: ${fmt(salary)})`);
         closeModal(); 
         await loadDB();
         showToast("Staff onboarded successfully!");
@@ -488,6 +738,7 @@ async function deleteStaff(id) {
     }
 }
 
+// --- ACADEMICS ACTIONS ---
 function openAssignmentModal() {
     openModal('Post Assignment', `
         <div class="form-group"><label>Title</label><input class="form-control" id="asgTitle"></div>
@@ -513,6 +764,7 @@ async function saveAssignment() {
     }
 }
 
+// --- TIMETABLE ACTIONS ---
 function openTimetableModal() {
     openModal('Add Timetable Slot', `
         <div class="form-group"><label>Day</label><select class="form-control" id="ttDay"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option></select></div>
@@ -543,6 +795,52 @@ async function saveTimetable() {
         showToast("Error: " + err.message, true);
     }
 }
+
+function openTimetableEditModal(id) {
+    let slot = db.timetable.find(t => t.id == id);
+    if(!slot) return;
+    
+    let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+    let dayOptions = days.map(d => `<option value="${d}" ${slot.day === d ? 'selected' : ''}>${d}</option>`).join('');
+    
+    openModal('Edit Timetable Slot', `
+        <div class="form-group">
+            <label>Day</label>
+            <select class="form-control" id="editTtDay">${dayOptions}</select>
+        </div>
+        <div class="form-group"><label>Time</label><input type="time" class="form-control" id="editTtTime" value="${slot.time}"></div>
+        <div class="form-group"><label>Class</label><input class="form-control" id="editTtClass" value="${slot.class}"></div>
+        <div class="form-group"><label>Subject</label><input class="form-control" id="editTtSubject" value="${slot.subject}"></div>
+        <div class="form-group"><label>Teacher</label><input class="form-control" id="editTtTeacher" value="${slot.teacher}"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="saveTimetableEdit('${id}')">Update Slot</button>
+    `);
+}
+
+async function saveTimetableEdit(id) {
+    let day = document.getElementById('editTtDay').value;
+    let time = document.getElementById('editTtTime').value;
+    let className = document.getElementById('editTtClass').value;
+    let subject = document.getElementById('editTtSubject').value;
+    let teacher = document.getElementById('editTtTeacher').value;
+    
+    if(!className || !subject || !teacher) return showToast("All fields are required", true);
+    
+    try {
+        const { error } = await supabaseClient.from('timetable').update({ 
+            day, time, class: className, subject, teacher 
+        }).eq('id', id);
+        
+        if (error) throw error;
+        
+        await logAction(`Updated timetable slot ID: ${id}`);
+        closeModal(); 
+        await loadDB(); 
+        showToast("Timetable slot updated!");
+    } catch (err) {
+        showToast("Error: " + err.message, true);
+    }
+}
+
 async function deleteSlot(id) { 
     if(!confirm("Are you sure you want to delete this slot?")) return;
     try {
@@ -557,6 +855,7 @@ async function deleteSlot(id) {
     }
 }
 
+// --- ANNOUNCEMENT ACTIONS ---
 function openAnnouncementModal() {
     openModal('Create Announcement', `
         <div class="form-group"><label>Title</label><input class="form-control" id="annTitle"></div>
