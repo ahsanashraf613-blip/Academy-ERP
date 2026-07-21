@@ -9,28 +9,45 @@
 </head>
 <body>
 
-    <aside class="sidebar no-print">
-        <div class="sidebar-header">
-            <div class="logo-icon">U</div>
-            <div><h1>Unified ERP</h1><span id="portalRoleText">Admin Portal</span></div>
+    <!-- LOGIN SCREEN -->
+    <div id="loginScreen" class="login-overlay">
+        <div class="login-box">
+            <div class="logo-icon" style="width: 50px; height: 50px; font-size: 1.5rem; margin-bottom: 20px;">U</div>
+            <h2>Unified School ERP</h2>
+            <p style="color: var(--text-muted); margin-bottom: 24px;">Select your portal to continue</p>
+            <select id="loginRole" class="form-control" style="margin-bottom: 16px;">
+                <option value="admin">Admin Portal</option>
+                <option value="teacher">Teacher Portal</option>
+                <option value="parent">Parent Portal</option>
+            </select>
+            <button class="btn btn-primary" style="width:100%; padding: 12px; font-size: 1rem;" onclick="login()">Secure Login</button>
         </div>
-        <nav class="nav-menu" id="navMenu"></nav>
-    </aside>
+    </div>
 
-    <main class="main-content">
-        <div class="topbar no-print">
-            <div><h2 id="pageTitle">Dashboard</h2><p id="pageSubtitle">Real-time overview</p></div>
-            <div class="user-area">
-                <select class="role-selector" onchange="switchPortal(this.value)">
-                    <option value="admin">Admin Portal</option>
-                    <option value="teacher">Teacher Portal</option>
-                    <option value="parent">Parent Portal</option>
-                </select>
+    <!-- MAIN APP (Hidden until login) -->
+    <div id="mainApp" style="display: none; width: 100%; display: flex;">
+        <aside class="sidebar no-print">
+            <div class="sidebar-header">
+                <div class="logo-icon">U</div>
+                <div><h1>Unified ERP</h1><span id="portalRoleText">Admin Portal</span></div>
             </div>
-        </div>
-        <div id="appContent"></div>
-        <div id="printArea"></div>
-    </main>
+            <nav class="nav-menu" id="navMenu"></nav>
+            <div style="padding: 20px; border-top: 1px solid var(--border);">
+                <button class="btn btn-danger" style="width: 100%;" onclick="logout()">Logout</button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div class="topbar no-print">
+                <div><h2 id="pageTitle">Dashboard</h2><p id="pageSubtitle">Real-time overview</p></div>
+                <div class="user-area">
+                    <div class="avatar" style="width: 40px; height: 40px; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: bold;" id="userAvatar">A</div>
+                </div>
+            </div>
+            <div id="appContent"></div>
+            <div id="printArea"></div>
+        </main>
+    </div>
 
     <div class="modal-overlay no-print" id="erpModal">
         <div class="modal">
