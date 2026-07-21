@@ -95,3 +95,8 @@ tbody tr:hover { background: #f9fafb; }
 .report-card table { width: 100%; border: 1px solid #333; margin-bottom: 20px; }
 .report-card th, .report-card td { border: 1px solid #333; padding: 10px; text-align: left; }
 .report-card .remarks { margin-top: 30px; border-top: 1px solid #333; padding-top: 15px; }
+/* Mobile Table Fix */
+.table-wrapper {
+    overflow-x: auto;
+    width: 100%;
+}
