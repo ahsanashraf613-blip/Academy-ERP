@@ -198,9 +198,12 @@ function getFinanceHTML() {
         </div>
         <div class="panel">
             <div class="panel-header"><h3>Finance Ledger</h3>
-                <div>
+                <div style="display: flex; gap: 10px;">
                     <button class="btn btn-ghost btn-sm" onclick="exportCSV('Ledger.csv', [['Date','Description','Type','Amount'], ...db.ledger.map(t => [t.date, t.desc, t.type, t.amount])])">Export CSV</button>
-                    ${currentPortal === 'admin' ? `<button class="btn btn-primary btn-sm" onclick="openExpenseModal()">Log Expense</button>` : ''}
+                    ${currentPortal === 'admin' ? `
+                        <button class="btn btn-success btn-sm" onclick="openTransactionModal('Income')">Log Income</button>
+                        <button class="btn btn-danger btn-sm" onclick="openTransactionModal('Expense')">Log Expense</button>
+                    ` : ''}
                 </div>
             </div>
             <table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th>Amount</th></tr></thead><tbody>
@@ -230,6 +233,9 @@ function renderInvTable() {
 }
 
 function getStudentsHTML() {
+    // Dynamically get unique grades from DB for the filter dropdown
+    let uniqueGrades = [...new Set(db.students.map(s => s.grade))];
+    
     return `
         <div class="panel">
             <div class="panel-header"><h3>Student Information System</h3>
@@ -241,7 +247,10 @@ function getStudentsHTML() {
             <div class="panel-body">
                 <div class="search-bar">
                     <input type="text" id="stuSearch" placeholder="Search by name or ID..." onkeyup="renderStuTable()">
-                    <select id="stuGradeFilter" onchange="renderStuTable()"><option value="">All Grades</option><option>10-A</option><option>9-B</option><option>12-A</option></select>
+                    <select id="stuGradeFilter" onchange="renderStuTable()">
+                        <option value="">All Grades</option>
+                        ${uniqueGrades.map(g => `<option value="${g}">${g}</option>`).join('')}
+                    </select>
                 </div>
                 <table id="stuTable"><thead><tr><th>ID</th><th>Name</th><th>Grade</th><th>Status</th><th>Actions</th></tr></thead><tbody>
                     ${db.students.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.grade}</td><td><span class="badge badge-success">${s.status}</span></td><td><button class="btn btn-danger btn-sm" onclick="deleteStudent('${s.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;">No students admitted yet.</td></tr>'}
@@ -327,26 +336,29 @@ function getAuditHTML() {
 }
 
 // --- MODAL & SUPABASE CRUD ACTIONS ---
-function openExpenseModal() {
-    openModal('Log New Expense', `
-        <div class="form-group"><label>Description</label><input class="form-control" id="expDesc" placeholder="e.g., Electricity Bill"></div>
-        <div class="form-group"><label>Amount (Rs.)</label><input type="number" class="form-control" id="expAmt"></div>
-        <button class="btn btn-primary" style="width:100%" onclick="saveExpense()">Save Expense</button>
+
+function openTransactionModal(type) {
+    let title = type === 'Income' ? 'Log New Income' : 'Log New Expense';
+    let placeholder = type === 'Income' ? 'e.g., Term 1 Fees' : 'e.g., Electricity Bill';
+    openModal(title, `
+        <div class="form-group"><label>Description</label><input class="form-control" id="transDesc" placeholder="${placeholder}"></div>
+        <div class="form-group"><label>Amount (Rs.)</label><input type="number" class="form-control" id="transAmt"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="saveTransaction('${type}')">Save ${type}</button>
     `);
 }
-async function saveExpense() {
-    let desc = document.getElementById('expDesc').value;
-    let amt = parseFloat(document.getElementById('expAmt').value);
+async function saveTransaction(type) {
+    let desc = document.getElementById('transDesc').value;
+    let amt = parseFloat(document.getElementById('transAmt').value);
     if(!desc || !amt) return showToast("Please fill all fields", true);
     
     try {
-        const { error } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc, type: "Expense", amount: amt }]);
+        const { error } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc, type: type, amount: amt }]);
         if (error) throw error;
         
-        await logAction(`Logged expense: ${desc} (${fmt(amt)})`);
+        await logAction(`Logged ${type}: ${desc} (${fmt(amt)})`);
         closeModal(); 
         await loadDB();
-        showToast("Expense logged successfully!");
+        showToast(`${type} logged successfully!`);
     } catch (err) {
         showToast("Error: " + err.message, true);
     }
@@ -392,21 +404,31 @@ async function deleteItem(id) {
 
 function openStudentModal() {
     openModal('Admit New Student', `
-        <div class="form-group"><label>Student Name</label><input class="form-control" id="stuName"></div>
-        <div class="form-group"><label>Grade</label><select class="form-control" id="stuGrade"><option>10-A</option><option>9-B</option><option>12-A</option></select></div>
+        <div class="form-group"><label>Student Name</label><input class="form-control" id="stuName" placeholder="Full Name"></div>
+        <div class="form-group">
+            <label>Grade / Class</label>
+            <input class="form-control" id="stuGrade" list="gradeOptions" placeholder="Type or select a grade (e.g., 8-C, 11-B)">
+            <datalist id="gradeOptions">
+                <option value="10-A">
+                <option value="9-B">
+                <option value="12-A">
+                <option value="11-C">
+                <option value="8-A">
+            </datalist>
+        </div>
         <button class="btn btn-primary" style="width:100%" onclick="saveStudent()">Admit</button>
     `);
 }
 async function saveStudent() {
     let name = document.getElementById('stuName').value;
     let grade = document.getElementById('stuGrade').value;
-    if(!name) return showToast("Name required", true);
+    if(!name || !grade) return showToast("Name and Grade are required", true);
     
     try {
         const { error } = await supabaseClient.from('students').insert([{ id: 'STU-'+Date.now(), name, grade, paid: 0, total: 30000, attendance: "100%", status: "Active" }]);
         if (error) throw error;
         
-        await logAction(`Admitted student: ${name}`);
+        await logAction(`Admitted student: ${name} to ${grade}`);
         closeModal(); 
         await loadDB();
         showToast("Student admitted successfully!");
@@ -431,7 +453,7 @@ async function deleteStudent(id) {
 function openStaffModal() {
     openModal('Staff Onboarding', `
         <div class="form-group"><label>Staff Name</label><input class="form-control" id="stfName"></div>
-        <div class="form-group"><label>Role</label><select class="form-control" id="stfRole"><option>Teacher</option><option>Admin</option><option>Accountant</option></select></div>
+        <div class="form-group"><label>Role</label><select class="form-control" id="stfRole"><option>Teacher</option><option>Admin</option><option>Accountant</option><option>Janitor</option><option>Security</option></select></div>
         <button class="btn btn-primary" style="width:100%" onclick="saveStaff()">Onboard</button>
     `);
 }
@@ -444,7 +466,7 @@ async function saveStaff() {
         const { error } = await supabaseClient.from('staff').insert([{ id: 'EMP-'+Date.now(), name, role, status: "Present", leavebalance: 15 }]);
         if (error) throw error;
         
-        await logAction(`Onboarded staff: ${name}`);
+        await logAction(`Onboarded staff: ${name} as ${role}`);
         closeModal(); 
         await loadDB();
         showToast("Staff onboarded successfully!");
