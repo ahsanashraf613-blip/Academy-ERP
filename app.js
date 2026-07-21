@@ -198,6 +198,7 @@ function getDashboardHTML() {
 function getFinanceHTML() {
     let totalIncome = db.ledger.filter(t => t.type === 'Income').reduce((a,b) => a+b.amount, 0);
     let totalExp = db.ledger.filter(t => t.type === 'Expense').reduce((a,b) => a+b.amount, 0);
+    let isAdmin = currentPortal === 'admin';
     return `
         <div class="grid-4">
             <div class="stat-card"><div class="label">Total Income</div><div class="value" style="color:var(--success)">${fmt(totalIncome)}</div></div>
@@ -208,11 +209,11 @@ function getFinanceHTML() {
             <div class="panel-header"><h3>Finance Ledger</h3>
                 <div style="display: flex; gap: 10px;">
                     <button class="btn btn-ghost btn-sm" onclick="exportCSV('Ledger.csv', [['Date','Description','Type','Amount'], ...db.ledger.map(t => [t.date, t.desc, t.type, t.amount])])">Export CSV</button>
-                    ${currentPortal === 'admin' ? `<button class="btn btn-success btn-sm" onclick="openTransactionModal('Income')">Log Income</button><button class="btn btn-danger btn-sm" onclick="openTransactionModal('Expense')">Log Expense</button>` : ''}
+                    ${isAdmin ? `<button class="btn btn-success btn-sm" onclick="openTransactionModal('Income')">Log Income</button><button class="btn btn-danger btn-sm" onclick="openTransactionModal('Expense')">Log Expense</button>` : ''}
                 </div>
             </div>
-            <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th>Amount</th></tr></thead><tbody>
-                ${db.ledger.map(t => `<tr><td>${t.date}</td><td>${t.desc}</td><td><span class="badge ${t.type==='Income'?'badge-success':'badge-danger'}">${t.type}</span></td><td style="font-weight:600;">${fmt(t.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No transactions recorded.</td></tr>'}
+            <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th>Amount</th>${isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody>
+                ${db.ledger.map(t => `<tr><td>${t.date}</td><td>${t.desc}</td><td><span class="badge ${t.type==='Income'?'badge-success':'badge-danger'}">${t.type}</span></td><td style="font-weight:600;">${fmt(t.amount)}</td>${isAdmin ? `<td><button class="btn btn-ghost btn-sm" onclick="openTransactionEditModal('${t.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteTransaction('${t.id}')">Delete</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="${isAdmin ? '5' : '4'}" style="text-align:center;">No transactions recorded.</td></tr>`}
             </tbody></table></div>
         </div>
     `;
@@ -426,8 +427,51 @@ function getAuditHTML() {
 }
 
 // --- MODAL & SUPABASE CRUD ACTIONS ---
+
+// FINANCE & LEDGER ACTIONS
 function openTransactionModal(type) { let title = type === 'Income' ? 'Log New Income' : 'Log New Expense'; let placeholder = type === 'Income' ? 'e.g., Term 1 Fees' : 'e.g., Electricity Bill'; openModal(title, `<div class="form-group"><label>Description</label><input class="form-control" id="transDesc" placeholder="${placeholder}"></div><div class="form-group"><label>Amount (Rs.)</label><input type="number" class="form-control" id="transAmt"></div><button class="btn btn-primary" style="width:100%" onclick="saveTransaction('${type}')">Save ${type}</button>`); }
 async function saveTransaction(type) { let desc = document.getElementById('transDesc').value; let amt = parseFloat(document.getElementById('transAmt').value); if(!desc || !amt) return showToast("Please fill all fields", true); try { const { error } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc, type: type, amount: amt }]); if (error) throw error; await logAction(`Logged ${type}: ${desc} (${fmt(amt)})`); closeModal(); await loadDB(); showToast(`${type} logged successfully!`); } catch (err) { showToast("Error: " + err.message, true); } }
+
+// NEW: Edit and Delete Ledger Transactions
+function openTransactionEditModal(id) {
+    let t = db.ledger.find(x => x.id == id); if(!t) return;
+    openModal('Edit Transaction', `
+        <div class="form-group"><label>Date</label><input type="text" class="form-control" id="editTransDate" value="${t.date}"></div>
+        <div class="form-group"><label>Description</label><input class="form-control" id="editTransDesc" value="${t.desc}"></div>
+        <div class="form-group"><label>Type</label>
+            <select class="form-control" id="editTransType">
+                <option value="Income" ${t.type === 'Income' ? 'selected' : ''}>Income</option>
+                <option value="Expense" ${t.type === 'Expense' ? 'selected' : ''}>Expense</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Amount (Rs.)</label><input type="number" class="form-control" id="editTransAmt" value="${t.amount}"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="saveTransactionEdit('${id}')">Update Transaction</button>
+    `);
+}
+async function saveTransactionEdit(id) {
+    let date = document.getElementById('editTransDate').value;
+    let desc = document.getElementById('editTransDesc').value;
+    let type = document.getElementById('editTransType').value;
+    let amt = parseFloat(document.getElementById('editTransAmt').value);
+    
+    if(!desc || !amt || !date) return showToast("Please fill all fields", true);
+    try {
+        const { error } = await supabaseClient.from('ledger').update({ date, desc, type, amount: amt }).eq('id', id);
+        if (error) throw error;
+        await logAction(`Updated transaction ID: ${id}`);
+        closeModal(); await loadDB();
+        showToast("Transaction updated successfully!");
+    } catch (err) { showToast("Error: " + err.message, true); }
+}
+async function deleteTransaction(id) { 
+    if(!confirm("Are you sure you want to delete this transaction?")) return;
+    try { 
+        const { error } = await supabaseClient.from('ledger').delete().eq('id', id); 
+        if (error) throw error; 
+        await logAction(`Deleted transaction ID: ${id}`); 
+        await loadDB(); showToast("Transaction deleted."); 
+    } catch (err) { showToast("Error: " + err.message, true); }
+}
 
 // --- INVENTORY ACTIONS ---
 function openInventoryModal() { openModal('Add Inventory Item', `<div class="form-group"><label>Item Name</label><input class="form-control" id="invName"></div><div class="form-group"><label>Stock Quantity</label><input type="number" class="form-control" id="invStock"></div><button class="btn btn-primary" style="width:100%" onclick="saveInventory()">Save Item</button>`); }
