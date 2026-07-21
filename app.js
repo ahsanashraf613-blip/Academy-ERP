@@ -1,7 +1,7 @@
 // --- SUPABASE INITIALIZATION ---
 const SUPABASE_URL = 'https://zzdndookrgbxzkhuazgd.supabase.co'; 
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6ZG5kb29rcmdieHpraHVhemdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1NzMyMzEsImV4cCI6MjEwMDE0OTIzMX0.TLfTQ2-gw2gxr8_Nf6zuHPSMOYyH4fBmKDD0bjWBBn0';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // --- GLOBAL STATE ---
 let db = {
@@ -25,7 +25,7 @@ function showToast(msg, isError = false) {
 
 async function logAction(action) {
     try {
-        await supabase.from('audit_log').insert([{ time: new Date().toLocaleString(), user_role: currentPortal, action }]);
+        await supabaseClient.from('audit_log').insert([{ time: new Date().toLocaleString(), user_role: currentPortal, action }]);
         await fetchAuditLog();
     } catch (e) {
         console.error("Audit log error:", e.message);
@@ -53,29 +53,27 @@ async function loadDB() {
     document.getElementById('appContent').innerHTML = '<p>Connecting to Supabase database...</p>';
     
     try {
-        // 1. Fetch Data
-        const { data: students, error: e1 } = await supabase.from('students').select('*');
+        const { data: students, error: e1 } = await supabaseClient.from('students').select('*');
         if (e1) throw e1;
         
-        const { data: staff, error: e2 } = await supabase.from('staff').select('*');
+        const { data: staff, error: e2 } = await supabaseClient.from('staff').select('*');
         if (e2) throw e2;
         
-        const { data: inventory, error: e3 } = await supabase.from('inventory').select('*');
+        const { data: inventory, error: e3 } = await supabaseClient.from('inventory').select('*');
         if (e3) throw e3;
         
-        const { data: ledger, error: e4 } = await supabase.from('ledger').select('*');
+        const { data: ledger, error: e4 } = await supabaseClient.from('ledger').select('*');
         if (e4) throw e4;
         
-        const { data: announcements, error: e5 } = await supabase.from('announcements').select('*');
+        const { data: announcements, error: e5 } = await supabaseClient.from('announcements').select('*');
         if (e5) throw e5;
         
-        const { data: timetable, error: e6 } = await supabase.from('timetable').select('*');
+        const { data: timetable, error: e6 } = await supabaseClient.from('timetable').select('*');
         if (e6) throw e6;
         
-        const { data: assignments, error: e7 } = await supabase.from('assignments').select('*');
+        const { data: assignments, error: e7 } = await supabaseClient.from('assignments').select('*');
         if (e7) throw e7;
 
-        // 2. Assign to State
         db.students = students || [];
         db.staff = staff || [];
         db.inventory = inventory || [];
@@ -88,19 +86,12 @@ async function loadDB() {
         navigateTo(currentPage);
 
     } catch (error) {
-        // If anything fails, show the exact error on the screen
         document.getElementById('appContent').innerHTML = `
             <div class="panel" style="border-color: var(--danger);">
                 <div class="panel-header"><h3 style="color: var(--danger);">⚠️ Database Connection Failed</h3></div>
                 <div class="panel-body">
                     <p><strong>Error Details:</strong></p>
                     <pre style="background: #f3f4f6; padding: 15px; border-radius: 8px; white-space: pre-wrap; font-family: monospace;">${error.message}</pre>
-                    <br>
-                    <p><strong>How to fix:</strong></p>
-                    <ol>
-                        <li>Make sure you ran the SQL code in your Supabase SQL Editor to create the tables.</li>
-                        <li>Check your internet connection.</li>
-                    </ol>
                 </div>
             </div>
         `;
@@ -110,7 +101,7 @@ async function loadDB() {
 
 async function fetchAuditLog() {
     try {
-        const { data } = await supabase.from('audit_log').select('*').order('id', { ascending: false });
+        const { data } = await supabaseClient.from('audit_log').select('*').order('id', { ascending: false });
         db.auditLog = data || [];
         if (currentPage === "audit") navigateTo('audit');
     } catch (e) {
@@ -349,7 +340,7 @@ async function saveExpense() {
     if(!desc || !amt) return showToast("Please fill all fields", true);
     
     try {
-        const { error } = await supabase.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc, type: "Expense", amount: amt }]);
+        const { error } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc, type: "Expense", amount: amt }]);
         if (error) throw error;
         
         await logAction(`Logged expense: ${desc} (${fmt(amt)})`);
@@ -374,7 +365,7 @@ async function saveInventory() {
     if(!name || stock < 0) return showToast("Invalid input", true);
     
     try {
-        const { error } = await supabase.from('inventory').insert([{ id: 'INV-'+Date.now(), item: name, stock, status: stock < 10 ? "Low Stock" : "In Stock" }]);
+        const { error } = await supabaseClient.from('inventory').insert([{ id: 'INV-'+Date.now(), item: name, stock, status: stock < 10 ? "Low Stock" : "In Stock" }]);
         if (error) throw error;
         
         await logAction(`Added inventory item: ${name}`);
@@ -388,7 +379,7 @@ async function saveInventory() {
 async function deleteItem(id) { 
     if(!confirm("Are you sure you want to delete this item?")) return;
     try {
-        const { error } = await supabase.from('inventory').delete().eq('id', id); 
+        const { error } = await supabaseClient.from('inventory').delete().eq('id', id); 
         if (error) throw error;
         
         await logAction(`Deleted inventory item ID: ${id}`); 
@@ -412,7 +403,7 @@ async function saveStudent() {
     if(!name) return showToast("Name required", true);
     
     try {
-        const { error } = await supabase.from('students').insert([{ id: 'STU-'+Date.now(), name, grade, paid: 0, total: 30000, attendance: "100%", status: "Active" }]);
+        const { error } = await supabaseClient.from('students').insert([{ id: 'STU-'+Date.now(), name, grade, paid: 0, total: 30000, attendance: "100%", status: "Active" }]);
         if (error) throw error;
         
         await logAction(`Admitted student: ${name}`);
@@ -426,7 +417,7 @@ async function saveStudent() {
 async function deleteStudent(id) { 
     if(!confirm("Are you sure you want to delete this student?")) return;
     try {
-        const { error } = await supabase.from('students').delete().eq('id', id); 
+        const { error } = await supabaseClient.from('students').delete().eq('id', id); 
         if (error) throw error;
         
         await logAction(`Deleted student ID: ${id}`); 
@@ -450,7 +441,7 @@ async function saveStaff() {
     if(!name) return showToast("Name required", true);
     
     try {
-        const { error } = await supabase.from('staff').insert([{ id: 'EMP-'+Date.now(), name, role, status: "Present", leavebalance: 15 }]);
+        const { error } = await supabaseClient.from('staff').insert([{ id: 'EMP-'+Date.now(), name, role, status: "Present", leavebalance: 15 }]);
         if (error) throw error;
         
         await logAction(`Onboarded staff: ${name}`);
@@ -464,7 +455,7 @@ async function saveStaff() {
 async function deleteStaff(id) { 
     if(!confirm("Are you sure you want to delete this staff member?")) return;
     try {
-        const { error } = await supabase.from('staff').delete().eq('id', id); 
+        const { error } = await supabaseClient.from('staff').delete().eq('id', id); 
         if (error) throw error;
         
         await logAction(`Deleted staff ID: ${id}`); 
@@ -488,7 +479,7 @@ async function saveAssignment() {
     if(!title) return showToast("Title required", true);
     
     try {
-        const { error } = await supabase.from('assignments').insert([{ id: Date.now(), title, desc: document.getElementById('asgDesc').value, due: document.getElementById('asgDue').value, grade: "10-A" }]);
+        const { error } = await supabaseClient.from('assignments').insert([{ id: Date.now(), title, desc: document.getElementById('asgDesc').value, due: document.getElementById('asgDue').value, grade: "10-A" }]);
         if (error) throw error;
         
         await logAction(`Posted assignment: ${title}`);
@@ -512,7 +503,7 @@ function openTimetableModal() {
 }
 async function saveTimetable() {
     try {
-        const { error } = await supabase.from('timetable').insert([{ 
+        const { error } = await supabaseClient.from('timetable').insert([{ 
             id: Date.now(), 
             day: document.getElementById('ttDay').value, 
             time: document.getElementById('ttTime').value, 
@@ -533,7 +524,7 @@ async function saveTimetable() {
 async function deleteSlot(id) { 
     if(!confirm("Are you sure you want to delete this slot?")) return;
     try {
-        const { error } = await supabase.from('timetable').delete().eq('id', id); 
+        const { error } = await supabaseClient.from('timetable').delete().eq('id', id); 
         if (error) throw error;
         
         await logAction(`Deleted timetable slot`); 
@@ -556,7 +547,7 @@ async function saveAnnouncement() {
     if(!title) return showToast("Title required", true);
     
     try {
-        const { error } = await supabase.from('announcements').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), title, desc: document.getElementById('annDesc').value }]);
+        const { error } = await supabaseClient.from('announcements').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), title, desc: document.getElementById('annDesc').value }]);
         if (error) throw error;
         
         await logAction(`Published announcement: ${title}`);
