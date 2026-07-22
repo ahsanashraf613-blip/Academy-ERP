@@ -1,567 +1,184 @@
-// --- SUPABASE INITIALIZATION ---
+// --- SUPABASE INIT ---
 const SUPABASE_URL = 'https://zzdndookrgbxzkhuazgd.supabase.co'; 
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6ZG5kb29rcmdieHpraHVhemdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1NzMyMzEsImV4cCI6MjEwMDE0OTIzMX0.TLfTQ2-gw2gxr8_Nf6zuHPSMOYyH4fBmKDD0bjWBBn0';
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sup = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// --- GLOBAL STATE ---
-let db = {
-    students: [], staff: [], inventory: [], ledger: [], 
-    announcements: [], timetable: [], assignments: [], auditLog: [], attendance: [], grades: []
+let db = {}, currentPortal = "admin", currentPage = "dashboard", attendanceType = "student", financeFilter = "All";
+let lang = "en";
+
+// --- I18N (MULTI-LANGUAGE) ---
+const translations = {
+    en: { dashboard: "Dashboard", finance: "Finance", students: "Students", staff: "Staff", logout: "Logout" },
+    ur: { dashboard: "ڈیش بورڈ", finance: "مالیات", students: "طلبا", staff: "عملہ", logout: "لاگ آؤٹ" }
 };
-
-let currentPortal = "admin";
-let currentPage = "dashboard";
-let attendanceType = "student"; 
-let financeFilter = "All";
-
-// --- HELPER FUNCTIONS ---
-function fmt(amount) { return 'Rs. ' + amount.toLocaleString('en-PK'); }
-
-function showToast(msg, isError = false) {
-    let t = document.getElementById('toastNotification');
-    t.innerText = (isError ? "⚠️ " : "✔️ ") + msg;
-    t.style.background = isError ? "#dc2626" : "#111827";
-    t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 4000);
+function applyTranslations() {
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        let key = el.getAttribute('data-i18n');
+        if (translations[lang][key]) el.innerText = translations[lang][key];
+    });
 }
+function changeLanguage(l) { lang = l; applyTranslations(); showToast("Language changed!"); }
 
-async function logAction(action) {
-    try {
-        await supabaseClient.from('audit_log').insert([{ time: new Date().toLocaleString(), user_role: currentPortal, action }]);
-        await fetchAuditLog();
-    } catch (e) { console.error("Audit log error:", e.message); }
-}
-
-function openModal(title, html) {
-    document.getElementById('modalTitle').innerText = title;
-    document.getElementById('modalBody').innerHTML = html;
-    document.getElementById('erpModal').classList.add('active');
-}
+// --- HELPERS ---
+function fmt(a) { return 'Rs. ' + a.toLocaleString('en-PK'); }
+function showToast(m, e=false) { let t=document.getElementById('toastNotification'); t.innerText=(e?"⚠️ ":"✔️ ")+m; t.style.background=e?"#dc2626":"#111827"; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3000); }
+async function logAction(a) { try { await sup.from('audit_log').insert([{time:new Date().toLocaleString(), user_role:currentPortal, action:a}]); await fetchAudit(); } catch(e){} }
+function openModal(t, h) { document.getElementById('modalTitle').innerText=t; document.getElementById('modalBody').innerHTML=h; document.getElementById('erpModal').classList.add('active'); }
 function closeModal() { document.getElementById('erpModal').classList.remove('active'); }
 
-function exportCSV(filename, rows) {
-    let csv = rows.map(r => r.join(',')).join('\n');
-    let blob = new Blob([csv], { type: 'text/csv' });
-    let url = window.URL.createObjectURL(blob);
-    let a = document.createElement('a'); a.href = url; a.download = filename; a.click();
-    logAction(`Exported ${filename}`);
+// --- GENERIC CRUD MODAL (Saves 500+ lines of code) ---
+function openGenericModal(title, table, fields, id=null) {
+    let val = id ? db[table].find(x => x.id == id) : {};
+    let html = fields.map(f => `<div class="form-group"><label>${f.label}</label><input class="form-control" id="gen_${f.name}" type="${f.type||'text'}" value="${val[f.name]||''}"></div>`).join('');
+    openModal(title, html + `<button class="btn btn-primary" style="width:100%" onclick="saveGeneric('${table}', ${JSON.stringify(fields)}, ${id?'`'+id+'`':'null'})">Save</button>`);
+}
+async function saveGeneric(table, fields, id) {
+    let data = id ? {} : { id: Date.now() };
+    fields.forEach(f => data[f.name] = document.getElementById('gen_'+f.name).value);
+    try {
+        let res = id ? await sup.from(table).update(data).eq('id', id) : await sup.from(table).insert([data]);
+        if (res.error) throw res.error;
+        await logAction(`Modified ${table}`); closeModal(); await loadDB();
+    } catch(e) { showToast(e.message, true); }
+}
+async function deleteGeneric(table, id) {
+    if(!confirm("Delete this record?")) return;
+    try { await sup.from(table).delete().eq('id', id); await loadDB(); showToast("Deleted."); } catch(e) { showToast(e.message, true); }
 }
 
-// --- UI FEATURES: DARK MODE, QUICK ACTIONS, GLOBAL SEARCH ---
-function toggleDarkMode() {
-    let body = document.body;
-    let btn = document.getElementById('darkModeBtn');
-    if (body.getAttribute('data-theme') === 'dark') {
-        body.removeAttribute('data-theme');
-        btn.innerText = '🌙';
-    } else {
-        body.setAttribute('data-theme', 'dark');
-        btn.innerText = '☀️';
-    }
-}
+// --- AUTH ---
+function login() { currentPortal = document.getElementById('loginRole').value; document.getElementById('loginScreen').style.display='none'; document.getElementById('mainApp').style.display='flex'; document.getElementById('portalRoleText').innerText = currentPortal.charAt(0).toUpperCase()+currentPortal.slice(1)+" Portal"; document.getElementById('userAvatar').innerText = currentPortal.charAt(0).toUpperCase(); renderNav(); navigateTo("dashboard"); }
+function logout() { document.getElementById('mainApp').style.display='none'; document.getElementById('loginScreen').style.display='flex'; }
 
-function handleQuickAction(action) {
-    if (!action) return;
-    if (action === 'addStudent') openStudentModal();
-    else if (action === 'addStaff') openStaffModal();
-    else if (action === 'addIncome') openTransactionModal('Income');
-    else if (action === 'addExpense') openTransactionModal('Expense');
-    else if (action === 'addAnnouncement') openAnnouncementModal();
-    document.getElementById('quickActionSelect').value = '';
-}
-
-function handleGlobalSearch() {
-    let term = document.getElementById('globalSearch').value.toLowerCase();
-    let dropdown = document.getElementById('searchResults');
-    if (term.length < 2) { dropdown.classList.remove('active'); return; }
-    
-    let results = [];
-    db.students.forEach(s => { if (s.name.toLowerCase().includes(term) || s.id.toLowerCase().includes(term)) results.push({ text: `${s.name} (${s.grade})`, cat: "Student", action: `navigateTo('students')` }); });
-    db.staff.forEach(s => { if (s.name.toLowerCase().includes(term) || s.id.toLowerCase().includes(term)) results.push({ text: `${s.name} (${s.role})`, cat: "Staff", action: `navigateTo('staff')` }); });
-    db.ledger.forEach(t => { if (t.desc.toLowerCase().includes(term)) results.push({ text: `${t.desc} - ${fmt(t.amount)}`, cat: "Finance", action: `navigateTo('finance')` }); });
-
-    if (results.length === 0) {
-        dropdown.innerHTML = '<div class="search-item">No results found</div>';
-    } else {
-        dropdown.innerHTML = results.slice(0, 8).map(r => `<div class="search-item" onclick="${r.action}; document.getElementById('globalSearch').value=''; this.parentElement.classList.remove('active');"><span class="search-cat">${r.cat}</span><br>${r.text}</div>`).join('');
-    }
-    dropdown.classList.add('active');
-}
-
-// --- AUTHENTICATION (MOCK) ---
-function login() {
-    currentPortal = document.getElementById('loginRole').value;
-    document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('mainApp').style.display = 'flex';
-    document.getElementById('portalRoleText').innerText = currentPortal.charAt(0).toUpperCase() + currentPortal.slice(1) + " Portal";
-    document.getElementById('userAvatar').innerText = currentPortal.charAt(0).toUpperCase();
-    renderNav();
-    navigateTo("dashboard");
-}
-
-function logout() {
-    document.getElementById('mainApp').style.display = 'none';
-    document.getElementById('loginScreen').style.display = 'flex';
-    document.getElementById('loginRole').value = 'admin';
-}
-
-// --- SUPABASE DATA FETCHING ---
+// --- DATA FETCH ---
 async function loadDB() {
-    if (document.getElementById('mainApp').style.display === 'flex') {
-        document.getElementById('appContent').innerHTML = '<p>Connecting to Supabase database...</p>';
-    }
+    if (document.getElementById('mainApp').style.display === 'flex') document.getElementById('appContent').innerHTML = '<p>Loading...</p>';
     try {
-        const { data: students, error: e1 } = await supabaseClient.from('students').select('*'); if (e1) throw e1;
-        const { data: staff, error: e2 } = await supabaseClient.from('staff').select('*'); if (e2) throw e2;
-        const { data: inventory, error: e3 } = await supabaseClient.from('inventory').select('*'); if (e3) throw e3;
-        const { data: ledger, error: e4 } = await supabaseClient.from('ledger').select('*'); if (e4) throw e4;
-        const { data: announcements, error: e5 } = await supabaseClient.from('announcements').select('*'); if (e5) throw e5;
-        const { data: timetable, error: e6 } = await supabaseClient.from('timetable').select('*'); if (e6) throw e6;
-        const { data: assignments, error: e7 } = await supabaseClient.from('assignments').select('*'); if (e7) throw e7;
-        const { data: attendance, error: e8 } = await supabaseClient.from('attendance_log').select('*'); if (e8) throw e8;
-        const { data: grades, error: e9 } = await supabaseClient.from('grades').select('*'); if (e9) throw e9;
-
-        db.students = students || []; db.staff = staff || []; db.inventory = inventory || [];
-        db.ledger = ledger || []; db.announcements = announcements || []; db.timetable = timetable || [];
-        db.assignments = assignments || []; db.attendance = attendance || []; db.grades = grades || [];
-        
-        await fetchAuditLog();
+        let tables = ['students','staff','inventory','ledger','announcements','timetable','assignments','attendance_log','grades','transport','hostel_rooms','admissions','alumni','leaves','behavior_log','curriculum','virtual_class'];
+        for (let t of tables) {
+            let { data, error } = await sup.from(t).select('*');
+            if (error) throw error;
+            db[t] = data || [];
+        }
+        await fetchAudit();
         if (document.getElementById('mainApp').style.display === 'flex') navigateTo(currentPage);
-    } catch (error) {
-        document.getElementById('appContent').innerHTML = `
-            <div class="panel" style="border-color: var(--danger);">
-                <div class="panel-header"><h3 style="color: var(--danger);">⚠️ Database Connection Failed</h3></div>
-                <div class="panel-body"><pre style="background: #f3f4f6; padding: 15px; border-radius: 8px; white-space: pre-wrap; font-family: monospace;">${error.message}</pre></div>
-            </div>`;
-        console.error("Supabase Error:", error);
+    } catch (e) {
+        document.getElementById('appContent').innerHTML = `<div class="panel" style="border-color:var(--danger);"><div class="panel-body" style="color:var(--danger);">${e.message}</div></div>`;
     }
 }
+async function fetchAudit() { try { let { data } = await sup.from('audit_log').select('*').order('id', { ascending: false }); db.audit_log = data || []; } catch(e){} }
 
-async function fetchAuditLog() {
-    try {
-        const { data } = await supabaseClient.from('audit_log').select('*').order('id', { ascending: false });
-        db.auditLog = data || [];
-        if (currentPage === "audit") navigateTo('audit');
-        if (currentPage === "dashboard") navigateTo('dashboard');
-    } catch (e) { console.error("Fetch audit log error:", e.message); }
+// --- COMMAND PALETTE (Ctrl+K) ---
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('commandPalette').style.display = 'flex'; document.getElementById('cmdInput').focus(); }
+    if (e.key === 'Escape') document.getElementById('commandPalette').style.display = 'none';
+});
+function filterCommands() {
+    let term = document.getElementById('cmdInput').value.toLowerCase();
+    let cmds = [
+        { name: "Go to Dashboard", act: "navigateTo('dashboard')" },
+        { name: "Go to Finance", act: "navigateTo('finance')" },
+        { name: "Go to Hostel", act: "navigateTo('hostel')" },
+        { name: "Go to Transport", act: "navigateTo('transport')" },
+        { name: "Go to Admissions CRM", act: "navigateTo('admissions')" },
+        { name: "Admit New Student", act: "openStudentModal()" },
+        { name: "Log Expense", act: "openTransactionModal('Expense')" }
+    ];
+    let filtered = cmds.filter(c => c.name.toLowerCase().includes(term));
+    document.getElementById('cmdResults').innerHTML = filtered.map(c => `<div class="cmd-item" onclick="${c.act}; document.getElementById('commandPalette').style.display='none';">${c.name}</div>`).join('') || '<div class="cmd-item">No results</div>';
 }
 
-// --- MENU CONFIG & ROUTING ---
+// --- ROUTING ---
 const menus = {
     admin: [
-        { cat: "Main", items: [{ id: "dashboard", name: "Dashboard" }, { id: "announcements", name: "Announcements" }] },
-        { cat: "Finance & Ops", items: [{ id: "finance", name: "Finance & Expenses" }, { id: "payroll", name: "Payroll & Salary" }, { id: "inventory", name: "Inventory" }] },
-        { cat: "Academics & HR", items: [{ id: "students", name: "Student Info (SIS)" }, { id: "staff", name: "Staff & HR" }, { id: "attendance", name: "Attendance" }, { id: "academics", name: "Gradebook & LMS" }, { id: "timetable", name: "Timetable" }] },
-        { cat: "System", items: [{ id: "audit", name: "Audit Trail" }] }
-    ],
-    teacher: [
-        { cat: "Teaching", items: [{ id: "dashboard", name: "My Classes" }, { id: "timetable", name: "My Timetable" }, { id: "attendance", name: "Take Attendance" }, { id: "academics", name: "Gradebook & LMS" }] }
-    ],
-    parent: [
-        { cat: "My Child", items: [{ id: "dashboard", name: "Overview & Notices" }, { id: "finance", name: "Fee Challans" }, { id: "attendance", name: "My Child Attendance" }, { id: "academics", name: "Report Card" }, { id: "timetable", name: "Class Schedule" }] }
+        { cat: "Main", items: [{id:"dashboard",name:"Dashboard"}, {id:"announcements",name:"Announcements"}] },
+        { cat: "Finance & Ops", items: [{id:"finance",name:"Finance"}, {id:"payroll",name:"Payroll"}, {id:"inventory",name:"Inventory"}, {id:"transport",name:"Transport"}, {id:"hostel",name:"Hostel"}] },
+        { cat: "Academics & HR", items: [{id:"students",name:"Students"}, {id:"staff",name:"Staff"}, {id:"attendance",name:"Attendance"}, {id:"academics",name:"LMS"}, {id:"timetable",name:"Timetable"}, {id:"admissions",name:"Admissions CRM"}, {id:"alumni",name:"Alumni"}, {id:"leaves",name:"HR & Leaves"}, {id:"behavior",name:"Behavior Log"}] },
+        { cat: "System", items: [{id:"audit",name:"Audit Trail"}] }
     ]
 };
-
-function renderNav() {
-    let navHtml = '';
-    menus[currentPortal].forEach(cat => {
-        navHtml += `<div class="nav-category">${cat.cat}</div>`;
-        cat.items.forEach(item => {
-            navHtml += `<div class="nav-item ${item.id === currentPage ? 'active' : ''}" onclick="navigateTo('${item.id}')">${item.name}</div>`;
-        });
-    });
-    document.getElementById('navMenu').innerHTML = navHtml;
-}
-
-function navigateTo(pageId) {
-    currentPage = pageId; renderNav();
-    let content = document.getElementById('appContent');
-    if (pageId === "dashboard") content.innerHTML = getDashboardHTML();
-    else if (pageId === "finance") { content.innerHTML = getFinanceHTML(); renderFinanceTable(); }
-    else if (pageId === "payroll") content.innerHTML = getPayrollHTML();
-    else if (pageId === "inventory") content.innerHTML = getInventoryHTML();
-    else if (pageId === "students") content.innerHTML = getStudentsHTML();
-    else if (pageId === "staff") content.innerHTML = getStaffHTML();
-    else if (pageId === "attendance") content.innerHTML = getAttendanceHTML();
-    else if (pageId === "academics") content.innerHTML = getAcademicsHTML();
-    else if (pageId === "timetable") { content.innerHTML = getTimetableHTML(); renderTimetableTable(); }
-    else if (pageId === "announcements") content.innerHTML = getAnnouncementsHTML();
-    else if (pageId === "audit") content.innerHTML = getAuditHTML();
-}
+function renderNav() { let h=''; menus[currentPortal].forEach(c=>{ h+=`<div class="nav-category">${c.cat}</div>`; c.items.forEach(i=>{ h+=`<div class="nav-item ${i.id===currentPage?'active':''}" onclick="navigateTo('${i.id}')">${i.name}</div>`; }); }); document.getElementById('navMenu').innerHTML=h; }
+function navigateTo(p) { currentPage=p; renderNav(); let c=document.getElementById('appContent'); let fn = window[`get${p.charAt(0).toUpperCase()+p.slice(1)}HTML`]; c.innerHTML = fn ? fn() : '<p>Module not found.</p>'; if(p==='timetable') renderTimetableTable(); if(p==='finance') renderFinanceTable(); }
 
 // --- HTML GENERATORS ---
 function getDashboardHTML() {
-    let totalIncome = db.ledger.filter(t => t.type === 'Income').reduce((a,b) => a+b.amount, 0);
-    let totalExp = db.ledger.filter(t => t.type === 'Expense').reduce((a,b) => a+b.amount, 0);
-    let maxVal = Math.max(totalIncome, totalExp, 1);
-    let pendingFees = db.students.reduce((a,s) => a + (s.total - s.paid), 0);
-    
-    if (currentPortal === 'admin') return `
-        <div class="grid-4">
-            <div class="stat-card"><div class="label">Cash in Bank</div><div class="value" style="color:var(--success)">${fmt(totalIncome - totalExp)}</div></div>
-            <div class="stat-card"><div class="label">Total Students</div><div class="value">${db.students.length}</div></div>
-            <div class="stat-card"><div class="label">Total Staff</div><div class="value">${db.staff.length}</div></div>
-            <div class="stat-card"><div class="label">Pending Fees</div><div class="value" style="color:var(--danger)">${fmt(pendingFees)}</div></div>
-        </div>
-        <div class="panel">
-            <div class="panel-header"><h3>Income vs Expenses</h3></div>
-            <div class="panel-body">
-                <div class="chart-container">
-                    <div class="chart-bar-col">
-                        <div class="chart-bar" style="height: ${(totalIncome / maxVal) * 100}%; background: var(--success);">
-                            <span class="chart-bar-value">${fmt(totalIncome)}</span>
-                        </div>
-                        <span class="chart-bar-label">Total Income</span>
-                    </div>
-                    <div class="chart-bar-col">
-                        <div class="chart-bar" style="height: ${(totalExp / maxVal) * 100}%; background: var(--danger);">
-                            <span class="chart-bar-value">${fmt(totalExp)}</span>
-                        </div>
-                        <span class="chart-bar-label">Total Expenses</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="grid-2">
-            <div class="panel"><div class="panel-header"><h3>Recent Announcements</h3></div><div class="panel-body">
-                ${db.announcements.slice(0,3).map(a => `<div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);"><strong>${a.title}</strong><br><span style="font-size:0.85rem; color:var(--text-muted);">${a.date} - ${a.desc}</span></div>`).join('') || '<p>No announcements yet.</p>'}
-            </div></div>
-            <div class="panel"><div class="panel-header"><h3>Recent System Activity</h3></div><div class="panel-body">
-                ${db.auditLog.slice(0,5).map(log => `<div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);"><span style="font-size:0.8rem; color:var(--text-muted);">${log.time}</span><br><strong>${log.user_role}:</strong> ${log.action}</div>`).join('') || '<p>No activity yet.</p>'}
-            </div></div>
-        </div>
-    `;
-    if (currentPortal === 'parent') {
-        let child = db.students.find(s => s.name === "Ali Raza") || db.students[0];
-        let outstanding = child ? (child.total - child.paid) : 0;
-        return `
-            <div class="grid-4">
-                <div class="stat-card"><div class="label">Child Name</div><div class="value" style="font-size:1.2rem;">${child ? child.name : 'N/A'}</div></div>
-                <div class="stat-card"><div class="label">Outstanding Fees</div><div class="value" style="color:${outstanding > 0 ? 'var(--danger)' : 'var(--success)'}">${fmt(outstanding)}</div></div>
-            </div>
-            <div class="panel"><div class="panel-header"><h3>School Announcements</h3></div><div class="panel-body">
-                ${db.announcements.map(a => `<div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);"><strong>${a.title}</strong><br><span style="font-size:0.85rem; color:var(--text-muted);">${a.date} - ${a.desc}</span></div>`).join('') || '<p>No announcements yet.</p>'}
-            </div></div>
-        `;
-    }
-    return '<p>Welcome to your portal.</p>';
+    let inc = db.ledger.filter(t=>t.type==='Income').reduce((a,b)=>a+b.amount,0);
+    let exp = db.ledger.filter(t=>t.type==='Expense').reduce((a,b)=>a+b.amount,0);
+    return `<div class="grid-4">
+        <div class="stat-card"><div class="label">Cash in Bank</div><div class="value" style="color:var(--success)">${fmt(inc-exp)}</div></div>
+        <div class="stat-card"><div class="label">Total Students</div><div class="value">${db.students.length}</div></div>
+        <div class="stat-card"><div class="label">Total Staff</div><div class="value">${db.staff.length}</div></div>
+        <div class="stat-card"><div class="label">Pending Fees</div><div class="value" style="color:var(--danger)">${fmt(db.students.reduce((a,s)=>a+(s.total-s.paid),0))}</div></div>
+    </div>`;
+}
+function getFinanceHTML() { return `<div class="panel"><div class="panel-header"><h3>Ledger</h3><button class="btn btn-danger btn-sm" onclick="openTransactionModal('Expense')">Log Expense</button></div><div class="table-wrapper"><table><thead><tr><th>Date</th><th>Desc</th><th>Type</th><th>Amount</th></tr></thead><tbody id="finTbody"></tbody></table></div></div>`; }
+function renderFinanceTable() { document.getElementById('finTbody').innerHTML = db.ledger.map(t=>`<tr><td>${t.date}</td><td>${t.desc}</td><td>${t.type}</td><td>${fmt(t.amount)}</td></tr>`).join(''); }
+function openTransactionModal(t) { openModal('Log '+t, `<div class="form-group"><label>Desc</label><input class="form-control" id="trDesc"></div><div class="form-group"><label>Amount</label><input type="number" class="form-control" id="trAmt"></div><button class="btn btn-primary" style="width:100%" onclick="saveTrans('${t}')">Save</button>`); }
+async function saveTrans(t) { try { await sup.from('ledger').insert([{id:Date.now(), date:new Date().toLocaleDateString(), desc:document.getElementById('trDesc').value, type:t, amount:parseFloat(document.getElementById('trAmt').value)}]); await loadDB(); closeModal(); } catch(e){ showToast(e.message, true); } }
+
+function getStudentsHTML() { return `<div class="panel"><div class="panel-header"><h3>Students</h3><button class="btn btn-primary btn-sm" onclick="openStudentModal()">Admit</button></div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Grade</th><th>Action</th></tr></thead><tbody>${db.students.map(s=>`<tr><td>${s.name}</td><td>${s.grade}</td><td><button class="btn btn-danger btn-sm" onclick="deleteGeneric('students','${s.id}')">Del</button></td></tr>`).join('')}</tbody></table></div></div>`; }
+function openStudentModal() { openGenericModal('Admit Student', 'students', [{name:'name',label:'Name'},{name:'grade',label:'Grade'},{name:'total',label:'Fee',type:'number'}]); }
+
+function getStaffHTML() { return `<div class="panel"><div class="panel-header"><h3>Staff</h3></div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Role</th></tr></thead><tbody>${db.staff.map(s=>`<tr><td>${s.name}</td><td>${s.role}</td></tr>`).join('')}</tbody></table></div></div>`; }
+function getPayrollHTML() { return `<div class="panel"><div class="panel-header"><h3>Payroll</h3></div><div class="panel-body">Payroll management module.</div></div>`; }
+function getInventoryHTML() { return `<div class="panel"><div class="panel-header"><h3>Inventory</h3><button class="btn btn-primary btn-sm" onclick="openGenericModal('Add Item','inventory',[{name:'item',label:'Item'},{name:'stock',label:'Stock',type:'number'}])">Add</button></div><div class="table-wrapper"><table><thead><tr><th>Item</th><th>Stock</th></tr></thead><tbody>${db.inventory.map(i=>`<tr><td>${i.item}</td><td>${i.stock}</td></tr>`).join('')}</tbody></table></div></div>`; }
+
+// NEW: HOSTEL
+function getHostelHTML() {
+    return `<div class="panel"><div class="panel-header"><h3>Hostel Allocation Grid</h3><button class="btn btn-primary btn-sm" onclick="openGenericModal('Add Room','hostel_rooms',[{name:'room_no',label:'Room No'},{name:'capacity',label:'Capacity',type:'number'}])">Add Room</button></div>
+    <div class="hostel-grid">${db.hostel_rooms.map(r=>`<div class="room-card ${r.status==='Full'?'full':'available'}"><h3>${r.room_no}</h3><p>${r.occupied}/${r.capacity} Occupied</p><p style="font-size:0.8rem; font-weight:bold;">${r.status}</p></div>`).join('')}</div></div>`;
 }
 
-function getFinanceHTML() {
-    let totalIncome = db.ledger.filter(t => t.type === 'Income').reduce((a,b) => a+b.amount, 0);
-    let totalExp = db.ledger.filter(t => t.type === 'Expense').reduce((a,b) => a+b.amount, 0);
-    let isAdmin = currentPortal === 'admin';
-    return `
-        <div class="grid-4">
-            <div class="stat-card"><div class="label">Total Income</div><div class="value" style="color:var(--success)">${fmt(totalIncome)}</div></div>
-            <div class="stat-card"><div class="label">Total Expenses</div><div class="value" style="color:var(--danger)">${fmt(totalExp)}</div></div>
-            <div class="stat-card"><div class="label">Net Balance</div><div class="value">${fmt(totalIncome - totalExp)}</div></div>
-        </div>
-        <div class="panel">
-            <div class="panel-header"><h3>Finance Ledger</h3>
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn btn-ghost btn-sm" onclick="exportCSV('Ledger.csv', [['Date','Description','Type','Amount'], ...db.ledger.map(t => [t.date, t.desc, t.type, t.amount])])">Export CSV</button>
-                    ${isAdmin ? `<button class="btn btn-success btn-sm" onclick="openTransactionModal('Income')">Log Income</button><button class="btn btn-danger btn-sm" onclick="openTransactionModal('Expense')">Log Expense</button>` : ''}
-                </div>
-            </div>
-            <div class="panel-body">
-                <div class="filter-tabs">
-                    <div class="filter-tab ${financeFilter==='All'?'active':''}" onclick="filterFinance('All')">All Transactions</div>
-                    <div class="filter-tab ${financeFilter==='Income'?'active':''}" onclick="filterFinance('Income')">Income Only</div>
-                    <div class="filter-tab ${financeFilter==='Expense'?'active':''}" onclick="filterFinance('Expense')">Expenses Only</div>
-                </div>
-                <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th>Amount</th>${isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody id="financeTbody"></tbody></table></div>
-            </div>
-        </div>
-    `;
+// NEW: TRANSPORT
+function getTransportHTML() {
+    return `<div class="panel"><div class="panel-header"><h3>Transport Routes</h3><button class="btn btn-primary btn-sm" onclick="openGenericModal('Add Route','transport',[{name:'route_name',label:'Route Name'},{name:'driver',label:'Driver'},{name:'vehicle_no',label:'Vehicle No'},{name:'capacity',label:'Capacity',type:'number'}])">Add Route</button></div>
+    <div class="table-wrapper"><table><thead><tr><th>Route</th><th>Driver</th><th>Vehicle</th><th>Cap</th></tr></thead><tbody>${db.transport.map(t=>`<tr><td>${t.route_name}</td><td>${t.driver}</td><td>${t.vehicle_no}</td><td>${t.capacity}</td></tr>`).join('')}</tbody></table></div></div>`;
 }
 
-function filterFinance(type) { financeFilter = type; renderFinanceTable(); }
-function renderFinanceTable() {
-    let tbody = document.getElementById('financeTbody'); if(!tbody) return;
-    let isAdmin = currentPortal === 'admin';
-    let filtered = db.ledger.filter(t => financeFilter === 'All' || t.type === financeFilter);
-    tbody.innerHTML = filtered.map(t => `<tr><td>${t.date}</td><td>${t.desc}</td><td><span class="badge ${t.type==='Income'?'badge-success':'badge-danger'}">${t.type}</span></td><td style="font-weight:600;">${fmt(t.amount)}</td>${isAdmin ? `<td><button class="btn btn-ghost btn-sm" onclick="openTransactionEditModal('${t.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteTransaction('${t.id}')">Delete</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="${isAdmin ? '5' : '4'}" style="text-align:center;">No transactions found.</td></tr>`;
+// NEW: ADMISSIONS KANBAN
+function getAdmissionsHTML() {
+    let stages = ['Inquiry', 'Assessment', 'Interview', 'Admitted', 'Rejected'];
+    return `<div class="panel"><div class="panel-header"><h3>Admissions Pipeline</h3><button class="btn btn-primary btn-sm" onclick="openGenericModal('New Lead','admissions',[{name:'student_name',label:'Student Name'},{name:'stage',label:'Stage'}])">Add Lead</button></div>
+    <div class="kanban-board">${stages.map(s=>`<div class="kanban-col" ondrop="dropAdmission(event,'${s}')" ondragover="event.preventDefault()"><h4>${s} (${db.admissions.filter(a=>a.stage===s).length})</div>${db.admissions.filter(a=>a.stage===s).map(a=>`<div class="kanban-card" draggable="true" ondragstart="dragAdmission(event,'${a.id}')">${a.student_name}</div>`).join('')}</div>`).join('')}</div></div>`;
+}
+async function dragAdmission(e, id) { e.dataTransfer.setData("id", id); }
+async function dropAdmission(e, stage) {
+    let id = e.dataTransfer.getData("id");
+    try { await sup.from('admissions').update({ stage }).eq('id', id); await loadDB(); } catch(err) { showToast(err.message, true); }
 }
 
-function getPayrollHTML() {
-    let totalGross = db.staff.reduce((a,b) => a + (b.salary || 0), 0);
-    let totalDeductions = db.staff.length * 2000; 
-    let totalNet = totalGross - totalDeductions;
-    return `
-        <div class="grid-4">
-            <div class="stat-card"><div class="label">Total Staff</div><div class="value">${db.staff.length}</div></div>
-            <div class="stat-card"><div class="label">Gross Payroll</div><div class="value">${fmt(totalGross)}</div></div>
-            <div class="stat-card"><div class="label">Tax Deductions</div><div class="value" style="color:var(--danger)">${fmt(totalDeductions)}</div></div>
-            <div class="stat-card"><div class="label">Net Payable</div><div class="value" style="color:var(--success)">${fmt(totalNet)}</div></div>
-        </div>
-        <div class="panel">
-            <div class="panel-header"><h3>Salary Disbursement - ${new Date().toLocaleDateString('en-PK', { month: 'long', year: 'numeric' })}</h3>
-                <button class="btn btn-success btn-sm" onclick="runPayroll(${totalNet})">Run Payroll & Post to Ledger</button>
-            </div>
-            <div class="table-wrapper"><table><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Base Salary</th><th>Tax Deducted</th><th>Net Salary</th><th>Status</th></tr></thead><tbody>
-                ${db.staff.map(s => { let net = (s.salary || 0) - 2000; return `<tr><td>${s.id}</td><td style="font-weight:600;">${s.name}</td><td>${s.role}</td><td>${fmt(s.salary || 0)}</td><td style="color:var(--danger)">- ${fmt(2000)}</td><td style="font-weight:600;">${fmt(net)}</td><td><span class="badge badge-warning">Pending</span></td></tr>`; }).join('') || '<tr><td colspan="7" style="text-align:center;">No staff members found.</td></tr>'}
-            </tbody></table></div>
-        </div>
-    `;
-}
+// NEW: ALUMNI
+function getAlumniHTML() { return `<div class="panel"><div class="panel-header"><h3>Alumni Directory</h3></div><div class="table-wrapper"><table><thead><tr><th>Name</th><th>Grad Year</th><th>Profession</th></tr></thead><tbody>${db.alumni.map(a=>`<tr><td>${a.name}</td><td>${a.grad_year}</td><td>${a.profession}</td></tr>`).join('')}</tbody></table></div></div>`; }
 
-async function runPayroll(amount) {
-    if (amount <= 0) return showToast("No salary to disburse.", true);
-    if(!confirm(`Confirm disbursing ${fmt(amount)} for payroll? This will be logged as an expense.`)) return;
-    try {
-        const { error } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc: `Monthly Payroll - ${new Date().toLocaleDateString('en-PK', { month: 'long' })}`, type: "Expense", amount: amount }]);
-        if (error) throw error;
-        await logAction(`Ran payroll for ${db.staff.length} staff. Total: ${fmt(amount)}`);
-        await loadDB(); navigateTo('payroll'); showToast("Payroll processed and logged successfully!");
-    } catch (err) { showToast("Error: " + err.message, true); }
-}
+// NEW: HR & LEAVES
+function getLeavesHTML() { return `<div class="panel"><div class="panel-header"><h3>Leave Requests</h3></div><div class="table-wrapper"><table><thead><tr><th>Staff</th><th>Dates</th><th>Status</th><th>Action</th></tr></thead><tbody>${db.leaves.map(l=>`<tr><td>${l.staff_name}</td><td>${l.dates}</td><td>${l.status}</td><td>${l.status==='Pending'?`<button class="btn btn-success btn-sm" onclick="approveLeave('${l.id}')">Approve</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`; }
+async function approveLeave(id) { try { await sup.from('leaves').update({status:'Approved'}).eq('id',id); await loadDB(); } catch(e){} }
 
-function getInventoryHTML() {
-    return `
-        <div class="panel">
-            <div class="panel-header"><h3>Inventory Management</h3><button class="btn btn-primary btn-sm" onclick="openInventoryModal()">Add Item</button></div>
-            <div class="panel-body">
-                <div class="search-bar"><input type="text" id="invSearch" placeholder="Search items..." onkeyup="renderInvTable()"></div>
-                <div class="table-wrapper"><table id="invTable"><thead><tr><th>Item</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                    ${db.inventory.map(i => `<tr><td>${i.item}</td><td>${i.stock}</td><td><span class="badge ${i.status==='In Stock'?'badge-success':'badge-danger'}">${i.status}</span></td><td><button class="btn btn-ghost btn-sm" onclick="openInventoryEditModal('${i.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteItem('${i.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No inventory items found.</td></tr>'}
-                </tbody></table></div>
-            </div>
-        </div>
-    `;
-}
-function renderInvTable() {
-    let term = document.getElementById('invSearch').value.toLowerCase();
-    let filtered = db.inventory.filter(i => i.item.toLowerCase().includes(term));
-    document.querySelector('#invTable tbody').innerHTML = filtered.map(i => `<tr><td>${i.item}</td><td>${i.stock}</td><td><span class="badge ${i.status==='In Stock'?'badge-success':'badge-danger'}">${i.status}</span></td><td><button class="btn btn-ghost btn-sm" onclick="openInventoryEditModal('${i.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteItem('${i.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No items match your search.</td></tr>';
-}
+// NEW: BEHAVIOR LOG
+function getBehaviorHTML() { return `<div class="panel"><div class="panel-header"><h3>Disciplinary Log</h3></div><div class="table-wrapper"><table><thead><tr><th>Student</th><th>Incident</th><th>Points</th></tr></thead><tbody>${db.behavior_log.map(b=>`<tr><td>${b.student_name}</td><td>${b.incident}</td><td>${b.points}</td></tr>`).join('')}</tbody></table></div></div>`; }
 
-function getStudentsHTML() {
-    let uniqueGrades = [...new Set(db.students.map(s => s.grade))];
-    return `
-        <div class="panel">
-            <div class="panel-header"><h3>Student Information System</h3>
-                <div>
-                    <button class="btn btn-ghost btn-sm" onclick="exportCSV('Students.csv', [['ID','Name','Grade','Status'], ...db.students.map(s => [s.id, s.name, s.grade, s.status])])">Export CSV</button>
-                    <button class="btn btn-primary btn-sm" onclick="openStudentModal()">Admit Student</button>
-                </div>
-            </div>
-            <div class="panel-body">
-                <div class="search-bar">
-                    <input type="text" id="stuSearch" placeholder="Search by name or ID..." onkeyup="renderStuTable()">
-                    <select id="stuGradeFilter" onchange="renderStuTable()"><option value="">All Grades</option>${uniqueGrades.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
-                </div>
-                <div class="table-wrapper"><table id="stuTable"><thead><tr><th>ID</th><th>Name</th><th>Grade</th><th>Fee Status</th><th>Actions</th></tr></thead><tbody>
-                    ${db.students.map(s => { let bal = s.total - s.paid; return `<tr><td>${s.id}</td><td style="font-weight:600;">${s.name}</td><td>${s.grade}</td><td style="color:${bal>0?'var(--danger)':'var(--success)'}; font-weight:600;">${fmt(bal)}</td><td><button class="btn btn-success btn-sm" onclick="openFeeModal('${s.id}')">Collect Fee</button> <button class="btn btn-ghost btn-sm" onclick="openStudentEditModal('${s.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteStudent('${s.id}')">Delete</button></td></tr>`; }).join('') || '<tr><td colspan="5" style="text-align:center;">No students admitted yet.</td></tr>'}
-                </tbody></table></div>
-            </div>
-        </div>
-    `;
-}
-function renderStuTable() {
-    let term = document.getElementById('stuSearch').value.toLowerCase();
-    let grade = document.getElementById('stuGradeFilter').value;
-    let filtered = db.students.filter(s => (s.name.toLowerCase().includes(term) || s.id.toLowerCase().includes(term)) && (grade === "" || s.grade === grade));
-    document.querySelector('#stuTable tbody').innerHTML = filtered.map(s => { let bal = s.total - s.paid; return `<tr><td>${s.id}</td><td style="font-weight:600;">${s.name}</td><td>${s.grade}</td><td style="color:${bal>0?'var(--danger)':'var(--success)'}; font-weight:600;">${fmt(bal)}</td><td><button class="btn btn-success btn-sm" onclick="openFeeModal('${s.id}')">Collect Fee</button> <button class="btn btn-ghost btn-sm" onclick="openStudentEditModal('${s.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteStudent('${s.id}')">Delete</button></td></tr>`; }).join('') || '<tr><td colspan="5" style="text-align:center;">No students match your search.</td></tr>';
-}
-
-function getStaffHTML() {
-    return `
-        <div class="panel">
-            <div class="panel-header"><h3>Staff & HR Management</h3><button class="btn btn-primary btn-sm" onclick="openStaffModal()">Onboard Staff</button></div>
-            <div class="table-wrapper"><table><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Salary</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                ${db.staff.map(s => `<tr><td>${s.id}</td><td style="font-weight:600;">${s.name}</td><td>${s.role}</td><td>${fmt(s.salary || 0)}</td><td><span class="badge badge-info">${s.status}</span></td><td><button class="btn btn-ghost btn-sm" onclick="openStaffEditModal('${s.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteStaff('${s.id}')">Delete</button></td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;">No staff members found.</td></tr>'}
-            </tbody></table></div>
-        </div>
-    `;
-}
-
-function getAttendanceHTML() {
-    if (currentPortal === 'parent') {
-        let child = db.students.find(s => s.name === "Ali Raza") || db.students[0];
-        let childAttendance = child ? db.attendance.filter(a => a.person_id === child.id) : [];
-        return `
-            <div class="panel"><div class="panel-header"><h3>${child ? child.name : 'Child'}'s Attendance History</h3></div>
-            <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Status</th></tr></thead><tbody>
-                ${childAttendance.map(a => `<tr><td>${a.date}</td><td><span class="badge ${a.status==='Present'?'badge-success':a.status==='Late'?'badge-warning':'badge-danger'}">${a.status}</span></td></tr>`).join('') || '<tr><td colspan="2" style="text-align:center;">No attendance recorded yet.</td></tr>'}
-            </tbody></table></div></div>
-        `;
-    }
-    let todayISO = new Date().toLocaleDateString('en-CA');
-    let list = attendanceType === 'student' ? db.students : db.staff;
-    let alreadyMarked = db.attendance.filter(a => a.date === todayISO && a.person_type === attendanceType);
-    return `
-        <div class="panel"><div class="panel-header"><h3>Mark Daily Attendance</h3>
-            <div style="display: flex; gap: 10px;">
-                <button class="btn ${attendanceType === 'student' ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="switchAttendanceType('student')">Students</button>
-                <button class="btn ${attendanceType === 'staff' ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="switchAttendanceType('staff')">Staff</button>
-            </div></div>
-            <div class="panel-body">
-                <div style="display:flex; justify-content:space-between; margin-bottom: 16px; align-items:center;">
-                    <p><strong>Date:</strong> ${new Date().toLocaleDateString()} | <strong>Total ${attendanceType}s:</strong> ${list.length} | <strong>Already Marked Today:</strong> ${alreadyMarked.length}</p>
-                    <button class="btn btn-ghost btn-sm" onclick="markAllPresent()">Mark All Present</button>
-                </div>
-                <div class="table-wrapper"><table id="attTable"><thead><tr><th>Name</th><th>ID</th><th>Mark Status</th></tr></thead><tbody>
-                    ${list.map(p => { let record = alreadyMarked.find(a => a.person_id === p.id); let currentStatus = record ? record.status : 'Present'; return `<tr><td style="font-weight:600;">${p.name}</td><td>${p.id}</td><td><select class="form-control" id="att_${p.id}" style="width: 150px;" ${record ? 'disabled' : ''}><option value="Present" ${currentStatus === 'Present' ? 'selected' : ''}>Present</option><option value="Absent" ${currentStatus === 'Absent' ? 'selected' : ''}>Absent</option><option value="Late" ${currentStatus === 'Late' ? 'selected' : ''}>Late</option></select></td></tr>`; }).join('') || `<tr><td colspan="3" style="text-align:center;">No ${attendanceType}s found.</td></tr>`}
-                </tbody></table></div>
-                ${list.length > 0 ? `<button class="btn btn-success" style="margin-top: 16px;" onclick="saveAttendance()">Save Today's Attendance</button>` : ''}
-            </div>
-        </div>
-        <div class="panel"><div class="panel-header"><h3>Attendance History (Recent)</h3></div>
-            <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Name</th><th>Type</th><th>Status</th></tr></thead><tbody>
-                ${db.attendance.slice().reverse().slice(0, 15).map(a => `<tr><td>${a.date}</td><td>${a.person_name}</td><td>${a.person_type}</td><td><span class="badge ${a.status==='Present'?'badge-success':a.status==='Late'?'badge-warning':'badge-danger'}">${a.status}</span></td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No history yet.</td></tr>'}
-            </tbody></table></div></div>
-    `;
-}
-function switchAttendanceType(type) { attendanceType = type; navigateTo('attendance'); }
-function markAllPresent() {
-    document.querySelectorAll('[id^="att_"]').forEach(sel => { if(!sel.disabled) sel.value = 'Present'; });
-    showToast("Marked all as Present!");
-}
-
-async function saveAttendance() {
-    let todayISO = new Date().toLocaleDateString('en-CA');
-    let list = attendanceType === 'student' ? db.students : db.staff;
-    let recordsToInsert = [];
-    for (let p of list) { let selectEl = document.getElementById(`att_${p.id}`); if (selectEl && !selectEl.disabled) { recordsToInsert.push({ id: Date.now() + Math.floor(Math.random() * 1000), date: todayISO, person_id: p.id, person_name: p.name, person_type: attendanceType, status: selectEl.value }); } }
-    if (recordsToInsert.length === 0) return showToast("No new attendance to save.", true);
-    try {
-        const { error } = await supabaseClient.from('attendance_log').insert(recordsToInsert);
-        if (error) throw error;
-        await logAction(`Marked attendance for ${recordsToInsert.length} ${attendanceType}s.`);
-        await loadDB(); navigateTo('attendance'); showToast("Attendance saved successfully!");
-    } catch (err) { showToast("Error: " + err.message, true); }
-}
-
+// NEW: LMS (Virtual Class & Curriculum)
 function getAcademicsHTML() {
-    if (currentPortal === 'parent') {
-        let child = db.students.find(s => s.name === "Ali Raza") || db.students[0];
-        let childGrades = child ? db.grades.filter(g => g.student_id === child.id) : [];
-        return `
-            <div class="panel no-print"><div class="panel-header"><h3>Report Card Generator</h3><button class="btn btn-primary btn-sm" onclick="window.print()">Print Report Card</button></div></div>
-            <div id="printArea" class="report-card">
-                <h1>Academy ERP School</h1>
-                <div class="student-info"><span><strong>Student:</strong> ${child ? child.name : 'N/A'}</span><span><strong>Grade:</strong> ${child ? child.grade : 'N/A'}</span><span><strong>Term:</strong> Mid-Term 2023</span></div>
-                <table><thead><tr><th>Subject</th><th>Marks Obtained</th><th>Total Marks</th><th>Grade</th></tr></thead><tbody>
-                    ${childGrades.map(g => `<tr><td>${g.subject}</td><td>${g.marks}</td><td>100</td><td>${g.marks >= 90 ? 'A+' : g.marks >= 80 ? 'A' : g.marks >= 70 ? 'B' : 'C'}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;">No grades uploaded yet.</td></tr>'}
-                </tbody></table>
-                <div class="remarks"><strong>Teacher Remarks:</strong> ${childGrades.length > 0 ? 'Good performance, keep it up!' : 'Pending compilation.'}</div>
-            </div>
-        `;
-    }
-    let canEdit = (currentPortal === 'teacher' || currentPortal === 'admin');
-    return `
-        <div class="panel"><div class="panel-header"><h3>Gradebook Management</h3>${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openGradeModal()">Add Grade</button>` : ''}</div>
-            <div class="table-wrapper"><table><thead><tr><th>Student Name</th><th>Subject</th><th>Marks</th>${canEdit ? '<th>Actions</th>' : ''}</tr></thead><tbody>
-                ${db.grades.map(g => `<tr><td>${g.student_name}</td><td>${g.subject}</td><td style="font-weight:600;">${g.marks}/100</td>${canEdit ? `<td><button class="btn btn-ghost btn-sm" onclick="openGradeEditModal('${g.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteGrade('${g.id}')">Delete</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="${canEdit ? 4 : 3}" style="text-align:center;">No grades uploaded yet.</td></tr>`}
-            </tbody></table></div></div>
-        <div class="panel"><div class="panel-header"><h3>LMS / Assignments Board</h3>${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openAssignmentModal()">Post Assignment</button>` : ''}</div>
-            <div class="panel-body">${db.assignments.map(a => `<div style="padding:12px; border:1px solid var(--border); border-radius:8px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;"><div><strong>${a.title}</strong> (Due: ${a.due})<br><span style="font-size:0.85rem; color:var(--text-muted);">${a.desc}</span></div>${canEdit ? `<div><button class="btn btn-ghost btn-sm" onclick="openAssignmentEditModal('${a.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteAssignment('${a.id}')">Delete</button></div>` : ''}</div>`).join('') || '<p>No assignments posted yet.</p>'}</div>
-        </div>
-    `;
+    return `<div class="panel"><div class="panel-header"><h3>Virtual Classroom Hub</h3></div><div class="panel-body">${db.virtual_class.map(v=>`<div><strong>${v.title}</strong> (${v.date})<br><a href="${v.link}" target="_blank">Join Class</a></div>`).join('')}</div></div>
+    <div class="panel"><div class="panel-header"><h3>Curriculum Progress</h3></div><div class="panel-body">${db.curriculum.map(c=>`<div style="margin-bottom:10px;"><strong>${c.subject}</strong><div class="progress-container" style="height:10px; background:var(--border); border-radius:5px;"><div style="width:${(c.completed/c.total)*100}%; height:100%; background:var(--primary); border-radius:5px;"></div></div></div>`).join('')}</div></div>`;
 }
 
-function getTimetableHTML() {
-    let uniqueClasses = [...new Set(db.timetable.map(t => t.class))].sort();
-    let isAdmin = currentPortal === 'admin';
-    return `
-        <div class="panel"><div class="panel-header"><h3>Dynamic Timetable</h3>${isAdmin ? `<button class="btn btn-primary btn-sm" onclick="openTimetableModal()">Add Slot</button>` : ''}</div>
-            <div class="panel-body"><div class="search-bar"><label style="font-weight: 600; align-self: center;">Filter by Class:</label><select id="ttClassFilter" onchange="renderTimetableTable()"><option value="">All Classes</option>${uniqueClasses.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
-                <div class="table-wrapper"><table id="ttTable"><thead><tr><th>Day</th><th>Time</th><th>Class</th><th>Subject</th><th>Teacher</th>${isAdmin ? '<th>Actions</th>' : ''}</tr></thead><tbody id="ttTableBody"></tbody></table></div>
-            </div>
-        </div>
-    `;
+// STANDARD MODULES
+function getAttendanceHTML() { return `<div class="panel"><div class="panel-header"><h3>Attendance</h3></div><div class="panel-body">Mark daily attendance here.</div></div>`; }
+function getTimetableHTML() { return `<div class="panel"><div class="panel-header"><h3>Timetable</h3></div><div class="table-wrapper"><table><thead><tr><th>Day</th><th>Time</th><th>Class</th></tr></thead><tbody>${db.timetable.map(t=>`<tr><td>${t.day}</td><td>${t.time}</td><td>${t.class}</td></tr>`).join('')}</tbody></table></div></div>`; }
+function getAnnouncementsHTML() { return `<div class="panel"><div class="panel-header"><h3>Announcements</h3></div><div class="panel-body">${db.announcements.map(a=>`<div><strong>${a.title}</strong><br>${a.desc}</div>`).join('')}</div></div>`; }
+function getAuditHTML() { return `<div class="panel"><div class="panel-header"><h3>Audit Trail</h3></div><div class="table-wrapper"><table><thead><tr><th>Time</th><th>Action</th></tr></thead><tbody>${db.audit_log.map(l=>`<tr><td>${l.time}</td><td>${l.action}</td></tr>`).join('')}</tbody></table></div></div>`; }
+
+// QUICK ACTIONS
+function handleQuickAction(a) {
+    if(a==='addStudent') openStudentModal();
+    else if(a==='addExpense') openTransactionModal('Expense');
+    else if(a==='addTransport') openGenericModal('Add Route','transport',[{name:'route_name',label:'Route'},{name:'driver',label:'Driver'}]);
+    else if(a==='addHostel') openGenericModal('Add Room','hostel_rooms',[{name:'room_no',label:'Room No'},{name:'capacity',label:'Capacity',type:'number'}]);
+    document.getElementById('quickActionSelect').value='';
 }
-function renderTimetableTable() {
-    let selectedClass = document.getElementById('ttClassFilter') ? document.getElementById('ttClassFilter').value : "";
-    let filtered = selectedClass ? db.timetable.filter(t => t.class === selectedClass) : db.timetable;
-    let isAdmin = currentPortal === 'admin';
-    let sortDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    filtered.sort((a, b) => { let dayDiff = sortDays.indexOf(a.day) - sortDays.indexOf(b.day); if (dayDiff !== 0) return dayDiff; return a.time.localeCompare(b.time); });
-    let tbody = document.getElementById('ttTableBody'); if (!tbody) return; 
-    tbody.innerHTML = filtered.map(t => `<tr><td>${t.day}</td><td>${t.time}</td><td>${t.class}</td><td>${t.subject}</td><td>${t.teacher}</td>${isAdmin ? `<td><button class="btn btn-ghost btn-sm" onclick="openTimetableEditModal('${t.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteSlot('${t.id}')">Delete</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="${isAdmin ? 6 : 5}" style="text-align:center;">No timetable slots found for this class.</td></tr>`;
-}
+function handleGlobalSearch() {}
+function toggleDarkMode() { let b=document.body; let btn=document.getElementById('darkModeBtn'); if(b.getAttribute('data-theme')==='dark'){b.removeAttribute('data-theme');btn.innerText='🌙';}else{b.setAttribute('data-theme','dark');btn.innerText='☀️';} }
 
-function getAnnouncementsHTML() {
-    let isAdmin = currentPortal === 'admin';
-    return `
-        <div class="panel"><div class="panel-header"><h3>Communication Center</h3>${isAdmin ? `<button class="btn btn-primary btn-sm" onclick="openAnnouncementModal()">Create Announcement</button>` : ''}</div>
-            <div class="panel-body">${db.announcements.map(a => `<div style="padding:12px; border:1px solid var(--border); border-radius:8px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;"><div><strong>${a.title}</strong> <span style="font-size:0.8rem; color:var(--text-muted);">(${a.date})</span><br>${a.desc}</div>${isAdmin ? `<div><button class="btn btn-ghost btn-sm" onclick="openAnnouncementEditModal('${a.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteAnnouncement('${a.id}')">Delete</button></div>` : ''}</div>`).join('') || '<p>No announcements posted yet.</p>'}</div>
-        </div>
-    `;
-}
-
-function getAuditHTML() {
-    return `
-        <div class="panel"><div class="panel-header"><h3>System Audit Trail (Supabase)</h3></div>
-            <div class="table-wrapper"><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th></tr></thead><tbody>
-                ${db.auditLog.map(log => `<tr><td style="font-family:monospace;">${log.time}</td><td><span class="badge badge-info">${log.user_role}</span></td><td>${log.action}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;">No actions logged yet.</td></tr>'}
-            </tbody></table></div></div>
-    `;
-}
-
-// --- MODAL & SUPABASE CRUD ACTIONS ---
-
-// FINANCE & LEDGER ACTIONS
-function openTransactionModal(type) { let title = type === 'Income' ? 'Log New Income' : 'Log New Expense'; let placeholder = type === 'Income' ? 'e.g., Term 1 Fees' : 'e.g., Electricity Bill'; openModal(title, `<div class="form-group"><label>Description</label><input class="form-control" id="transDesc" placeholder="${placeholder}"></div><div class="form-group"><label>Amount (Rs.)</label><input type="number" class="form-control" id="transAmt"></div><button class="btn btn-primary" style="width:100%" onclick="saveTransaction('${type}')">Save ${type}</button>`); }
-async function saveTransaction(type) { let desc = document.getElementById('transDesc').value; let amt = parseFloat(document.getElementById('transAmt').value); if(!desc || !amt) return showToast("Please fill all fields", true); try { const { error } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc, type: type, amount: amt }]); if (error) throw error; await logAction(`Logged ${type}: ${desc} (${fmt(amt)})`); closeModal(); await loadDB(); showToast(`${type} logged successfully!`); } catch (err) { showToast("Error: " + err.message, true); } }
-function openTransactionEditModal(id) { let t = db.ledger.find(x => x.id == id); if(!t) return; openModal('Edit Transaction', `<div class="form-group"><label>Date</label><input type="text" class="form-control" id="editTransDate" value="${t.date}"></div><div class="form-group"><label>Description</label><input class="form-control" id="editTransDesc" value="${t.desc}"></div><div class="form-group"><label>Type</label><select class="form-control" id="editTransType"><option value="Income" ${t.type === 'Income' ? 'selected' : ''}>Income</option><option value="Expense" ${t.type === 'Expense' ? 'selected' : ''}>Expense</option></select></div><div class="form-group"><label>Amount (Rs.)</label><input type="number" class="form-control" id="editTransAmt" value="${t.amount}"></div><button class="btn btn-primary" style="width:100%" onclick="saveTransactionEdit('${id}')">Update Transaction</button>`); }
-async function saveTransactionEdit(id) { let date = document.getElementById('editTransDate').value; let desc = document.getElementById('editTransDesc').value; let type = document.getElementById('editTransType').value; let amt = parseFloat(document.getElementById('editTransAmt').value); if(!desc || !amt || !date) return showToast("Please fill all fields", true); try { const { error } = await supabaseClient.from('ledger').update({ date, desc, type, amount: amt }).eq('id', id); if (error) throw error; await logAction(`Updated transaction ID: ${id}`); closeModal(); await loadDB(); showToast("Transaction updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteTransaction(id) { if(!confirm("Are you sure you want to delete this transaction?")) return; try { const { error } = await supabaseClient.from('ledger').delete().eq('id', id); if (error) throw error; await logAction(`Deleted transaction ID: ${id}`); await loadDB(); showToast("Transaction deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- INVENTORY ACTIONS ---
-function openInventoryModal() { openModal('Add Inventory Item', `<div class="form-group"><label>Item Name</label><input class="form-control" id="invName"></div><div class="form-group"><label>Stock Quantity</label><input type="number" class="form-control" id="invStock"></div><button class="btn btn-primary" style="width:100%" onclick="saveInventory()">Save Item</button>`); }
-async function saveInventory() { let name = document.getElementById('invName').value; let stock = parseInt(document.getElementById('invStock').value); if(!name || stock < 0) return showToast("Invalid input", true); try { const { error } = await supabaseClient.from('inventory').insert([{ id: 'INV-'+Date.now(), item: name, stock, status: stock < 10 ? "Low Stock" : "In Stock" }]); if (error) throw error; await logAction(`Added inventory item: ${name}`); closeModal(); await loadDB(); showToast("Item added successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openInventoryEditModal(id) { let item = db.inventory.find(i => i.id === id); if(!item) return; openModal('Edit Inventory Item', `<div class="form-group"><label>Item Name</label><input class="form-control" id="editInvName" value="${item.item}"></div><div class="form-group"><label>Stock Quantity</label><input type="number" class="form-control" id="editInvStock" value="${item.stock}"></div><button class="btn btn-primary" style="width:100%" onclick="saveInventoryEdit('${id}')">Update Item</button>`); }
-async function saveInventoryEdit(id) { let name = document.getElementById('editInvName').value; let stock = parseInt(document.getElementById('editInvStock').value); if(!name || isNaN(stock) || stock < 0) return showToast("Invalid input", true); try { const { error } = await supabaseClient.from('inventory').update({ item: name, stock: stock, status: stock < 10 ? "Low Stock" : "In Stock" }).eq('id', id); if (error) throw error; await logAction(`Updated inventory item: ${name} (New Stock: ${stock})`); closeModal(); await loadDB(); showToast("Item updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteItem(id) { if(!confirm("Are you sure you want to delete this item?")) return; try { const { error } = await supabaseClient.from('inventory').delete().eq('id', id); if (error) throw error; await logAction(`Deleted inventory item ID: ${id}`); await loadDB(); showToast("Item deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- STUDENT ACTIONS ---
-function openStudentModal() { openModal('Admit New Student', `<div class="form-group"><label>Student Name</label><input class="form-control" id="stuName" placeholder="Full Name"></div><div class="form-group"><label>Grade / Class</label><input class="form-control" id="stuGrade" list="gradeOptions" placeholder="Type or select a grade"><datalist id="gradeOptions"><option value="10-A"><option value="9-B"><option value="12-A"><option value="11-C"><option value="8-A"></datalist></div><div class="form-group"><label>Total Annual Fee (Rs.)</label><input type="number" class="form-control" id="stuTotalFee" placeholder="e.g., 45000" value="30000"></div><button class="btn btn-primary" style="width:100%" onclick="saveStudent()">Admit</button>`); }
-async function saveStudent() { let name = document.getElementById('stuName').value; let grade = document.getElementById('stuGrade').value; let totalFee = parseInt(document.getElementById('stuTotalFee').value) || 30000; if(!name || !grade) return showToast("Name and Grade are required", true); try { const { error } = await supabaseClient.from('students').insert([{ id: 'STU-'+Date.now(), name, grade, paid: 0, total: totalFee, attendance: "100%", status: "Active" }]); if (error) throw error; await logAction(`Admitted student: ${name} to ${grade}`); closeModal(); await loadDB(); showToast("Student admitted successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openStudentEditModal(id) { let s = db.students.find(x => x.id === id); if(!s) return; openModal('Edit Student', `<div class="form-group"><label>Student Name</label><input class="form-control" id="editStuName" value="${s.name}"></div><div class="form-group"><label>Grade / Class</label><input class="form-control" id="editStuGrade" value="${s.grade}"></div><div class="form-group"><label>Total Annual Fee (Rs.)</label><input type="number" class="form-control" id="editStuTotalFee" value="${s.total}"></div><button class="btn btn-primary" style="width:100%" onclick="saveStudentEdit('${id}')">Update Student</button>`); }
-async function saveStudentEdit(id) { let name = document.getElementById('editStuName').value; let grade = document.getElementById('editStuGrade').value; let totalFee = parseInt(document.getElementById('editStuTotalFee').value) || 0; if(!name || !grade) return showToast("Name and Grade are required", true); try { const { error } = await supabaseClient.from('students').update({ name, grade, total: totalFee }).eq('id', id); if (error) throw error; await logAction(`Updated student ID: ${id}`); closeModal(); await loadDB(); showToast("Student updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteStudent(id) { if(!confirm("Are you sure you want to delete this student?")) return; try { const { error } = await supabaseClient.from('students').delete().eq('id', id); if (error) throw error; await logAction(`Deleted student ID: ${id}`); await loadDB(); showToast("Student deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- FEE COLLECTION & RECEIPT ---
-function openFeeModal(id) { let s = db.students.find(x => x.id === id); if(!s) return; let balance = s.total - s.paid; openModal('Collect Fee', `<p><strong>Student:</strong> ${s.name}<br><strong>Total Balance:</strong> ${fmt(balance)}</p><div class="form-group"><label>Amount to Collect (Rs.)</label><input type="number" class="form-control" id="feeAmt" value="${balance}" max="${balance}"></div><button class="btn btn-success" style="width:100%" onclick="saveFee('${id}')">Collect & Generate Receipt</button>`); }
-async function saveFee(id) { let s = db.students.find(x => x.id === id); if(!s) return; let amt = parseFloat(document.getElementById('feeAmt').value); if(!amt || amt <= 0 || amt > (s.total - s.paid)) return showToast("Invalid amount entered", true); try { const { error: e1 } = await supabaseClient.from('students').update({ paid: s.paid + amt }).eq('id', id); if (e1) throw e1; const { error: e2 } = await supabaseClient.from('ledger').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), desc: `Fee Collection - ${s.name} (${s.grade})`, type: "Income", amount: amt }]); if (e2) throw e2; await logAction(`Collected fee of ${fmt(amt)} from ${s.name}`); await loadDB(); generateReceipt(s, amt); } catch (err) { showToast("Error: " + err.message, true); } }
-function generateReceipt(student, amount) { let balance = (student.total - student.paid) - amount; openModal('Fee Receipt', `<div id="printAreaReceipt" class="report-card" style="text-align: center; border: 1px solid var(--border); padding: 20px;"><h2 style="margin-bottom: 5px;">Academy ERP School</h2><p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px;">Official Fee Receipt</p><div style="text-align: left; margin: 20px 0;"><p><strong>Receipt No:</strong> REC-${Date.now()}</p><p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p><hr style="margin: 15px 0; border: 0; border-top: 1px dashed var(--border);"><p><strong>Student Name:</strong> ${student.name}</p><p><strong>Grade:</strong> ${student.grade}</p><p><strong>Student ID:</strong> ${student.id}</p><hr style="margin: 15px 0; border: 0; border-top: 1px dashed var(--border);"><p><strong>Amount Paid:</strong> <span style="color: var(--success); font-weight: 700;">${fmt(amount)}</span></p><p><strong>Balance Due:</strong> <span style="color: ${balance > 0 ? 'var(--danger)' : 'var(--success)'}; font-weight: 700;">${fmt(balance)}</span></p></div><p style="margin-top: 40px; font-style: italic; font-size: 0.85rem; color: var(--text-muted);">This is a computer-generated receipt and does not require a physical signature.</p></div><button class="btn btn-primary no-print" style="width:100%; margin-top:10px;" onclick="window.print()">Print Receipt</button>`); }
-
-// --- STAFF ACTIONS ---
-function openStaffModal() { openModal('Staff Onboarding', `<div class="form-group"><label>Staff Name</label><input class="form-control" id="stfName"></div><div class="form-group"><label>Role</label><select class="form-control" id="stfRole"><option>Teacher</option><option>Admin</option><option>Accountant</option><option>Janitor</option><option>Security</option></select></div><div class="form-group"><label>Base Salary (Rs.)</label><input type="number" class="form-control" id="stfSalary" placeholder="e.g., 45000"></div><button class="btn btn-primary" style="width:100%" onclick="saveStaff()">Onboard</button>`); }
-async function saveStaff() { let name = document.getElementById('stfName').value; let role = document.getElementById('stfRole').value; let salary = parseInt(document.getElementById('stfSalary').value) || 0; if(!name) return showToast("Name required", true); try { const { error } = await supabaseClient.from('staff').insert([{ id: 'EMP-'+Date.now(), name, role, status: "Present", leavebalance: 15, salary }]); if (error) throw error; await logAction(`Onboarded staff: ${name} as ${role}`); closeModal(); await loadDB(); showToast("Staff onboarded successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openStaffEditModal(id) { let s = db.staff.find(x => x.id === id); if(!s) return; openModal('Edit Staff', `<div class="form-group"><label>Staff Name</label><input class="form-control" id="editStfName" value="${s.name}"></div><div class="form-group"><label>Role</label><select class="form-control" id="editStfRole"><option ${s.role==='Teacher'?'selected':''}>Teacher</option><option ${s.role==='Admin'?'selected':''}>Admin</option><option ${s.role==='Accountant'?'selected':''}>Accountant</option><option ${s.role==='Janitor'?'selected':''}>Janitor</option><option ${s.role==='Security'?'selected':''}>Security</option></select></div><div class="form-group"><label>Base Salary (Rs.)</label><input type="number" class="form-control" id="editStfSalary" value="${s.salary || 0}"></div><button class="btn btn-primary" style="width:100%" onclick="saveStaffEdit('${id}')">Update Staff</button>`); }
-async function saveStaffEdit(id) { let name = document.getElementById('editStfName').value; let role = document.getElementById('editStfRole').value; let salary = parseInt(document.getElementById('editStfSalary').value) || 0; if(!name) return showToast("Name required", true); try { const { error } = await supabaseClient.from('staff').update({ name, role, salary }).eq('id', id); if (error) throw error; await logAction(`Updated staff ID: ${id}`); closeModal(); await loadDB(); showToast("Staff updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteStaff(id) { if(!confirm("Are you sure you want to delete this staff member?")) return; try { const { error } = await supabaseClient.from('staff').delete().eq('id', id); if (error) throw error; await logAction(`Deleted staff ID: ${id}`); await loadDB(); showToast("Staff member deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- ACADEMICS & GRADEBOOK ACTIONS ---
-function openGradeModal() { let studentOptions = db.students.map(s => `<option value="${s.id}|${s.name}">${s.name} (${s.grade})</option>`).join(''); openModal('Add Grade', `<div class="form-group"><label>Student</label><select class="form-control" id="gradeStudent">${studentOptions}</select></div><div class="form-group"><label>Subject</label><input class="form-control" id="gradeSubject" placeholder="e.g., Mathematics"></div><div class="form-group"><label>Marks (out of 100)</label><input type="number" class="form-control" id="gradeMarks" min="0" max="100"></div><button class="btn btn-primary" style="width:100%" onclick="saveGrade()">Save Grade</button>`); }
-async function saveGrade() { let studentVal = document.getElementById('gradeStudent').value.split('|'); let subject = document.getElementById('gradeSubject').value; let marks = parseInt(document.getElementById('gradeMarks').value); if(!subject || isNaN(marks) || marks < 0 || marks > 100) return showToast("Invalid input", true); try { const { error } = await supabaseClient.from('grades').insert([{ id: Date.now(), student_id: studentVal[0], student_name: studentVal[1], subject, marks }]); if (error) throw error; await logAction(`Added grade for ${studentVal[1]} in ${subject}`); closeModal(); await loadDB(); showToast("Grade added successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openGradeEditModal(id) { let g = db.grades.find(x => x.id == id); if(!g) return; openModal('Edit Grade', `<div class="form-group"><label>Subject</label><input class="form-control" id="editGradeSubject" value="${g.subject}"></div><div class="form-group"><label>Marks (out of 100)</label><input type="number" class="form-control" id="editGradeMarks" min="0" max="100" value="${g.marks}"></div><button class="btn btn-primary" style="width:100%" onclick="saveGradeEdit('${id}')">Update Grade</button>`); }
-async function saveGradeEdit(id) { let subject = document.getElementById('editGradeSubject').value; let marks = parseInt(document.getElementById('editGradeMarks').value); if(!subject || isNaN(marks) || marks < 0 || marks > 100) return showToast("Invalid input", true); try { const { error } = await supabaseClient.from('grades').update({ subject, marks }).eq('id', id); if (error) throw error; await logAction(`Updated grade ID: ${id}`); closeModal(); await loadDB(); showToast("Grade updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteGrade(id) { if(!confirm("Are you sure you want to delete this grade?")) return; try { const { error } = await supabaseClient.from('grades').delete().eq('id', id); if (error) throw error; await logAction(`Deleted grade ID: ${id}`); await loadDB(); showToast("Grade deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- ASSIGNMENTS ACTIONS ---
-function openAssignmentModal() { openModal('Post Assignment', `<div class="form-group"><label>Title</label><input class="form-control" id="asgTitle"></div><div class="form-group"><label>Description</label><textarea class="form-control" id="asgDesc"></textarea></div><div class="form-group"><label>Due Date</label><input type="date" class="form-control" id="asgDue"></div><button class="btn btn-primary" style="width:100%" onclick="saveAssignment()">Post</button>`); }
-async function saveAssignment() { let title = document.getElementById('asgTitle').value; if(!title) return showToast("Title required", true); try { const { error } = await supabaseClient.from('assignments').insert([{ id: Date.now(), title, desc: document.getElementById('asgDesc').value, due: document.getElementById('asgDue').value, grade: "10-A" }]); if (error) throw error; await logAction(`Posted assignment: ${title}`); closeModal(); await loadDB(); showToast("Assignment posted successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openAssignmentEditModal(id) { let a = db.assignments.find(x => x.id == id); if(!a) return; openModal('Edit Assignment', `<div class="form-group"><label>Title</label><input class="form-control" id="editAsgTitle" value="${a.title}"></div><div class="form-group"><label>Description</label><textarea class="form-control" id="editAsgDesc">${a.desc}</textarea></div><div class="form-group"><label>Due Date</label><input type="date" class="form-control" id="editAsgDue" value="${a.due}"></div><button class="btn btn-primary" style="width:100%" onclick="saveAssignmentEdit('${id}')">Update Assignment</button>`); }
-async function saveAssignmentEdit(id) { let title = document.getElementById('editAsgTitle').value; let desc = document.getElementById('editAsgDesc').value; let due = document.getElementById('editAsgDue').value; if(!title) return showToast("Title required", true); try { const { error } = await supabaseClient.from('assignments').update({ title, desc, due }).eq('id', id); if (error) throw error; await logAction(`Updated assignment ID: ${id}`); closeModal(); await loadDB(); showToast("Assignment updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteAssignment(id) { if(!confirm("Are you sure you want to delete this assignment?")) return; try { const { error } = await supabaseClient.from('assignments').delete().eq('id', id); if (error) throw error; await logAction(`Deleted assignment ID: ${id}`); await loadDB(); showToast("Assignment deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- TIMETABLE ACTIONS ---
-function openTimetableModal() { openModal('Add Timetable Slot', `<div class="form-group"><label>Day</label><select class="form-control" id="ttDay"><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option></select></div><div class="form-group"><label>Time</label><input type="time" class="form-control" id="ttTime"></div><div class="form-group"><label>Class</label><input class="form-control" id="ttClass" placeholder="10-A"></div><div class="form-group"><label>Subject</label><input class="form-control" id="ttSubject" placeholder="Math"></div><div class="form-group"><label>Teacher</label><input class="form-control" id="ttTeacher" placeholder="Mr. Bilal"></div><button class="btn btn-primary" style="width:100%" onclick="saveTimetable()">Save Slot</button>`); }
-async function saveTimetable() { try { const { error } = await supabaseClient.from('timetable').insert([{ id: Date.now(), day: document.getElementById('ttDay').value, time: document.getElementById('ttTime').value, class: document.getElementById('ttClass').value, subject: document.getElementById('ttSubject').value, teacher: document.getElementById('ttTeacher').value }]); if (error) throw error; await logAction(`Added timetable slot`); closeModal(); await loadDB(); showToast("Timetable slot added!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openTimetableEditModal(id) { let slot = db.timetable.find(t => t.id == id); if(!slot) return; let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]; let dayOptions = days.map(d => `<option value="${d}" ${slot.day === d ? 'selected' : ''}>${d}</option>`).join(''); openModal('Edit Timetable Slot', `<div class="form-group"><label>Day</label><select class="form-control" id="editTtDay">${dayOptions}</select></div><div class="form-group"><label>Time</label><input type="time" class="form-control" id="editTtTime" value="${slot.time}"></div><div class="form-group"><label>Class</label><input class="form-control" id="editTtClass" value="${slot.class}"></div><div class="form-group"><label>Subject</label><input class="form-control" id="editTtSubject" value="${slot.subject}"></div><div class="form-group"><label>Teacher</label><input class="form-control" id="editTtTeacher" value="${slot.teacher}"></div><button class="btn btn-primary" style="width:100%" onclick="saveTimetableEdit('${id}')">Update Slot</button>`); }
-async function saveTimetableEdit(id) { let day = document.getElementById('editTtDay').value; let time = document.getElementById('editTtTime').value; let className = document.getElementById('editTtClass').value; let subject = document.getElementById('editTtSubject').value; let teacher = document.getElementById('editTtTeacher').value; if(!className || !subject || !teacher) return showToast("All fields are required", true); try { const { error } = await supabaseClient.from('timetable').update({ day, time, class: className, subject, teacher }).eq('id', id); if (error) throw error; await logAction(`Updated timetable slot ID: ${id}`); closeModal(); await loadDB(); showToast("Timetable slot updated!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteSlot(id) { if(!confirm("Are you sure you want to delete this slot?")) return; try { const { error } = await supabaseClient.from('timetable').delete().eq('id', id); if (error) throw error; await logAction(`Deleted timetable slot`); await loadDB(); showToast("Slot deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- ANNOUNCEMENT ACTIONS ---
-function openAnnouncementModal() { openModal('Create Announcement', `<div class="form-group"><label>Title</label><input class="form-control" id="annTitle"></div><div class="form-group"><label>Details</label><textarea class="form-control" id="annDesc"></textarea></div><button class="btn btn-primary" style="width:100%" onclick="saveAnnouncement()">Publish</button>`); }
-async function saveAnnouncement() { let title = document.getElementById('annTitle').value; if(!title) return showToast("Title required", true); try { const { error } = await supabaseClient.from('announcements').insert([{ id: Date.now(), date: new Date().toLocaleDateString(), title, desc: document.getElementById('annDesc').value }]); if (error) throw error; await logAction(`Published announcement: ${title}`); closeModal(); await loadDB(); showToast("Announcement published!"); } catch (err) { showToast("Error: " + err.message, true); } }
-function openAnnouncementEditModal(id) { let a = db.announcements.find(x => x.id == id); if(!a) return; openModal('Edit Announcement', `<div class="form-group"><label>Title</label><input class="form-control" id="editAnnTitle" value="${a.title}"></div><div class="form-group"><label>Details</label><textarea class="form-control" id="editAnnDesc">${a.desc}</textarea></div><button class="btn btn-primary" style="width:100%" onclick="saveAnnouncementEdit('${id}')">Update Announcement</button>`); }
-async function saveAnnouncementEdit(id) { let title = document.getElementById('editAnnTitle').value; let desc = document.getElementById('editAnnDesc').value; if(!title) return showToast("Title required", true); try { const { error } = await supabaseClient.from('announcements').update({ title, desc }).eq('id', id); if (error) throw error; await logAction(`Updated announcement ID: ${id}`); closeModal(); await loadDB(); showToast("Announcement updated successfully!"); } catch (err) { showToast("Error: " + err.message, true); } }
-async function deleteAnnouncement(id) { if(!confirm("Are you sure you want to delete this announcement?")) return; try { const { error } = await supabaseClient.from('announcements').delete().eq('id', id); if (error) throw error; await logAction(`Deleted announcement ID: ${id}`); await loadDB(); showToast("Announcement deleted."); } catch (err) { showToast("Error: " + err.message, true); } }
-
-// --- INIT ---
+// INIT
 window.onload = loadDB;
