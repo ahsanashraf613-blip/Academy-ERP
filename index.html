@@ -40,10 +40,31 @@
         <main class="main-content">
             <div class="topbar no-print">
                 <div><h2 id="pageTitle">Dashboard</h2><p id="pageSubtitle">Real-time overview</p></div>
-                <div class="user-area">
+                
+                <div class="user-area" style="flex-wrap: wrap; gap: 12px;">
+                    <!-- Global Search -->
+                    <div class="global-search-container">
+                        <input type="text" id="globalSearch" placeholder="🔍 Search students, staff, ledger..." oninput="handleGlobalSearch()">
+                        <div id="searchResults" class="search-results-dropdown"></div>
+                    </div>
+
+                    <!-- Quick Actions -->
+                    <select id="quickActionSelect" onchange="handleQuickAction(this.value)" class="role-selector" style="background: var(--primary); color: white;">
+                        <option value="">⚡ Quick Add</option>
+                        <option value="addStudent">Admit Student</option>
+                        <option value="addStaff">Onboard Staff</option>
+                        <option value="addIncome">Log Income</option>
+                        <option value="addExpense">Log Expense</option>
+                        <option value="addAnnouncement">Add Announcement</option>
+                    </select>
+
+                    <!-- Dark Mode Toggle -->
+                    <button class="btn btn-ghost" onclick="toggleDarkMode()" id="darkModeBtn" style="padding: 8px 12px; font-size: 1.1rem;">🌙</button>
+
                     <div class="avatar" style="width: 40px; height: 40px; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: bold;" id="userAvatar">A</div>
                 </div>
             </div>
+
             <div id="appContent"></div>
             <div id="printArea"></div>
         </main>
