@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unified School ERP - Complete System</title>
+    <title>Unified School ERP - Enterprise</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-    <!-- LOGIN SCREEN -->
     <div id="loginScreen" class="login-overlay">
         <div class="login-box">
             <div class="logo-icon" style="width: 50px; height: 50px; font-size: 1.5rem; margin-bottom: 20px;">U</div>
@@ -20,11 +19,18 @@
                 <option value="teacher">Teacher Portal</option>
                 <option value="parent">Parent Portal</option>
             </select>
-            <button class="btn btn-primary" style="width:100%; padding: 12px; font-size: 1rem;" onclick="login()">Secure Login</button>
+            <button class="btn btn-primary" style="width:100%; padding: 12px;" onclick="login()">Secure Login</button>
         </div>
     </div>
 
-    <!-- MAIN APP (Hidden until login) -->
+    <!-- COMMAND PALETTE -->
+    <div id="commandPalette" class="cmd-overlay" style="display:none;">
+        <div class="cmd-box">
+            <input type="text" id="cmdInput" placeholder="Type a command or search... (e.g., Admit Student, Transport)" oninput="filterCommands()">
+            <div id="cmdResults" class="cmd-results"></div>
+        </div>
+    </div>
+
     <div id="mainApp" style="display: none; width: 100%; display: flex;">
         <aside class="sidebar no-print">
             <div class="sidebar-header">
@@ -42,25 +48,25 @@
                 <div><h2 id="pageTitle">Dashboard</h2><p id="pageSubtitle">Real-time overview</p></div>
                 
                 <div class="user-area" style="flex-wrap: wrap; gap: 12px;">
-                    <!-- Global Search -->
                     <div class="global-search-container">
-                        <input type="text" id="globalSearch" placeholder="🔍 Search students, staff, ledger..." oninput="handleGlobalSearch()">
+                        <input type="text" id="globalSearch" placeholder="🔍 Search..." oninput="handleGlobalSearch()">
                         <div id="searchResults" class="search-results-dropdown"></div>
                     </div>
 
-                    <!-- Quick Actions -->
                     <select id="quickActionSelect" onchange="handleQuickAction(this.value)" class="role-selector" style="background: var(--primary); color: white;">
                         <option value="">⚡ Quick Add</option>
                         <option value="addStudent">Admit Student</option>
-                        <option value="addStaff">Onboard Staff</option>
-                        <option value="addIncome">Log Income</option>
                         <option value="addExpense">Log Expense</option>
-                        <option value="addAnnouncement">Add Announcement</option>
+                        <option value="addTransport">Add Transport Route</option>
+                        <option value="addHostel">Add Hostel Room</option>
                     </select>
 
-                    <!-- Dark Mode Toggle -->
-                    <button class="btn btn-ghost" onclick="toggleDarkMode()" id="darkModeBtn" style="padding: 8px 12px; font-size: 1.1rem;">🌙</button>
+                    <select id="langSelect" onchange="changeLanguage(this.value)" class="role-selector">
+                        <option value="en">🇬🇧 English</option>
+                        <option value="ur">🇵🇰 Urdu</option>
+                    </select>
 
+                    <button class="btn btn-ghost" onclick="toggleDarkMode()" id="darkModeBtn" style="padding: 8px 12px;">🌙</button>
                     <div class="avatar" style="width: 40px; height: 40px; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: bold;" id="userAvatar">A</div>
                 </div>
             </div>
