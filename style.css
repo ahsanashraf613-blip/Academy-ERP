@@ -130,4 +130,47 @@ tbody tr:hover { background: #f9fafb; }
     .modal-overlay.active #printAreaReceipt, .modal-overlay.active #printAreaReceipt * { visibility: visible; }
     .modal-overlay.active #printAreaReceipt { position: absolute; left: 0; top: 0; width: 100%; padding: 40px; border: none; }
     .no-print { display: none !important; }
+    /* --- DARK MODE --- */
+body[data-theme="dark"] {
+    --main-bg: #111827;
+    --card-bg: #1f2937;
+    --text-main: #f9fafb;
+    --text-muted: #9ca3af;
+    --border: #374151;
+    --sidebar-bg: #0f172a;
+    --sidebar-hover: #1e293b;
+    --sidebar-active: #1e293b;
+    --primary-light: #312e81;
+}
+body[data-theme="dark"] .panel-header { background: #1a2332; }
+body[data-theme="dark"] th { background: #1a2332; }
+body[data-theme="dark"] tbody tr:hover { background: #1a2332; }
+body[data-theme="dark"] .form-control { background: #374151; color: white; }
+body[data-theme="dark"] .search-bar input, body[data-theme="dark"] .search-bar select { background: #374151; color: white; border-color: #4b5563; }
+
+/* --- GLOBAL SEARCH --- */
+.global-search-container { position: relative; width: 300px; }
+.global-search-container input {
+    width: 100%; padding: 10px 14px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 0.85rem; outline: none; background: var(--card-bg); color: var(--text-main);
+}
+.global-search-container input:focus { border-color: var(--primary); }
+.search-results-dropdown {
+    position: absolute; top: 110%; left: 0; right: 0; background: var(--card-bg);
+    border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 15px rgba(0,0,0,0.1);
+    z-index: 100; display: none; max-height: 300px; overflow-y: auto;
+}
+.search-results-dropdown.active { display: block; }
+.search-item {
+    padding: 12px 16px; cursor: pointer; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem; color: var(--text-main);
+}
+.search-item:hover { background: var(--main-bg); }
+.search-item:last-child { border-bottom: none; }
+.search-item .search-cat { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+
+/* --- FINANCE FILTER --- */
+.filter-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.filter-tab { padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; border: 1px solid var(--border); background: var(--card-bg); color: var(--text-muted); }
+.filter-tab.active { background: var(--primary); color: white; border-color: var(--primary); }
 }
