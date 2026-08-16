@@ -1,90 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unified School ERP - Enterprise</title>
-    <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Academy ERP – Unified School Management</title>
+
+    <!-- CDN: Font Awesome, Chart.js, FullCalendar, jsPDF, html2canvas, Leaflet, QRCode -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/main.min.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css" />
+
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/main.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
-    <div id="loginScreen" class="login-overlay">
-        <div class="login-box">
-            <div class="logo-icon" style="width: 50px; height: 50px; font-size: 1.5rem; margin-bottom: 20px;">U</div>
-            <h2>Unified School ERP</h2>
-            <p style="color: var(--text-muted); margin-bottom: 24px;">Select your portal to continue</p>
-            <select id="loginRole" class="form-control" style="margin-bottom: 16px;">
-                <option value="admin">Admin Portal</option>
-                <option value="teacher">Teacher Portal</option>
-                <option value="parent">Parent Portal</option>
-            </select>
-            <button class="btn btn-primary" style="width:100%; padding: 12px;" onclick="login()">Secure Login</button>
+<!-- ===================== LOGIN ===================== -->
+<div id="loginScreen" class="login-overlay">
+    <div class="login-box glass">
+        <div class="login-brand">
+            <div class="logo-icon"><i class="fas fa-graduation-cap"></i></div>
+            <div><h2>Academy ERP</h2><p class="sub">Secure & Unified</p></div>
         </div>
-    </div>
-
-    <!-- COMMAND PALETTE -->
-    <div id="commandPalette" class="cmd-overlay" style="display:none;">
-        <div class="cmd-box">
-            <input type="text" id="cmdInput" placeholder="Type a command or search... (e.g., Admit Student, Transport)" oninput="filterCommands()">
-            <div id="cmdResults" class="cmd-results"></div>
+        <div id="loginError" class="login-error"></div>
+        <div class="form-group">
+            <label><i class="fas fa-envelope"></i> Email</label>
+            <input type="email" id="authEmail" class="form-control" placeholder="you@school.edu" autocomplete="username" />
         </div>
+        <div class="form-group">
+            <label><i class="fas fa-lock"></i> Password</label>
+            <input type="password" id="authPassword" class="form-control" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div class="form-group" id="signupNameGroup" style="display:none;">
+            <label><i class="fas fa-user"></i> Full Name</label>
+            <input type="text" id="authFullName" class="form-control" placeholder="Jane Doe" />
+        </div>
+        <button class="btn btn-primary btn-block" id="authSubmitBtn" onclick="handleAuthSubmit()">
+            <i class="fas fa-sign-in-alt"></i> Sign in
+        </button>
+        <div class="login-toggle" id="loginToggle">
+            New here? <button onclick="toggleAuthMode()">Create an account</button>
+        </div>
+        <div style="margin-top:12px; text-align:center;">
+            <a href="#" onclick="resetPassword()" style="font-size:0.85rem;">Forgot password?</a>
+        </div>
+        <p class="sub" style="margin-top:16px; font-size:0.75rem;">New accounts start as Parent – admin can upgrade.</p>
     </div>
+</div>
 
-    <div id="mainApp" style="display: none; width: 100%; display: flex;">
-        <aside class="sidebar no-print">
-            <div class="sidebar-header">
-                <div class="logo-icon">U</div>
-                <div><h1>Unified ERP</h1><span id="portalRoleText">Admin Portal</span></div>
-            </div>
-            <nav class="nav-menu" id="navMenu"></nav>
-            <div style="padding: 20px; border-top: 1px solid var(--border);">
-                <button class="btn btn-danger" style="width: 100%;" onclick="logout()">Logout</button>
-            </div>
-        </aside>
+<!-- ===================== COMMAND PALETTE ===================== -->
+<div id="commandPalette" class="cmd-overlay" style="display:none;">
+    <div class="cmd-box glass">
+        <input type="text" id="cmdInput" placeholder="Type a command or search..." oninput="filterCommands()" />
+        <div id="cmdResults" class="cmd-results"></div>
+    </div>
+</div>
 
-        <main class="main-content">
-            <div class="topbar no-print">
-                <div><h2 id="pageTitle">Dashboard</h2><p id="pageSubtitle">Real-time overview</p></div>
-                
-                <div class="user-area" style="flex-wrap: wrap; gap: 12px;">
-                    <div class="global-search-container">
-                        <input type="text" id="globalSearch" placeholder="🔍 Search..." oninput="handleGlobalSearch()">
-                        <div id="searchResults" class="search-results-dropdown"></div>
-                    </div>
+<!-- ===================== SIDEBAR OVERLAY ===================== -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
 
-                    <select id="quickActionSelect" onchange="handleQuickAction(this.value)" class="role-selector" style="background: var(--primary); color: white;">
-                        <option value="">⚡ Quick Add</option>
-                        <option value="addStudent">Admit Student</option>
-                        <option value="addExpense">Log Expense</option>
-                        <option value="addTransport">Add Transport Route</option>
-                        <option value="addHostel">Add Hostel Room</option>
-                    </select>
+<!-- ===================== MAIN APP ===================== -->
+<div id="mainApp" style="display: none; width:100%; display:flex;">
 
-                    <select id="langSelect" onchange="changeLanguage(this.value)" class="role-selector">
-                        <option value="en">🇬🇧 English</option>
-                        <option value="ur">🇵🇰 Urdu</option>
-                    </select>
+    <!-- SIDEBAR -->
+    <aside class="sidebar no-print" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo-icon"><i class="fas fa-graduation-cap"></i></div>
+            <div><h1>Academy ERP</h1><span id="portalRoleText">Admin</span></div>
+            <button class="btn btn-ghost btn-icon sidebar-close" onclick="closeSidebar()"><i class="fas fa-times"></i></button>
+        </div>
+        <nav class="nav-menu" id="navMenu"></nav>
+        <div class="sidebar-footer">
+            <div id="sidebarUserEmail" style="color:#9BA6B5; font-size:0.8rem; margin-bottom:10px;"></div>
+            <button class="btn btn-danger btn-block" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
+        </div>
+    </aside>
 
-                    <button class="btn btn-ghost" onclick="toggleDarkMode()" id="darkModeBtn" style="padding: 8px 12px;">🌙</button>
-                    <div class="avatar" style="width: 40px; height: 40px; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: bold;" id="userAvatar">A</div>
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+        <!-- TOPBAR -->
+        <div class="topbar no-print">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <button class="hamburger" onclick="openSidebar()"><i class="fas fa-bars"></i></button>
+                <div>
+                    <h2 id="pageTitle">Dashboard</h2>
+                    <p id="pageSubtitle">Real-time overview</p>
                 </div>
             </div>
-
-            <div id="appContent"></div>
-            <div id="printArea"></div>
-        </main>
-    </div>
-
-    <div class="modal-overlay no-print" id="erpModal">
-        <div class="modal">
-            <div class="modal-header"><h3 id="modalTitle">Action</h3><button class="close-btn" onclick="closeModal()">&times;</button></div>
-            <div class="modal-body" id="modalBody"></div>
+            <div class="user-area">
+                <div class="global-search-container">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="globalSearch" placeholder="Search..." oninput="handleGlobalSearch()" />
+                    <div id="searchResults" class="search-results-dropdown"></div>
+                </div>
+                <div class="notification-bell" onclick="toggleNotifications()">
+                    <i class="fas fa-bell"></i>
+                    <span class="badge" id="notifBadge">0</span>
+                    <div class="notif-dropdown" id="notifDropdown"></div>
+                </div>
+                <select id="quickActionSelect" onchange="handleQuickAction(this.value)" class="btn btn-primary btn-sm">
+                    <option value="">+ Quick Add</option>
+                    <option value="addStudent">Admit Student</option>
+                    <option value="addExpense">Log Expense</option>
+                    <option value="addTransport">Add Route</option>
+                    <option value="addHostel">Add Room</option>
+                    <option value="addEvent">Add Event</option>
+                </select>
+                <select id="langSelect" onchange="changeLanguage(this.value)" class="form-control" style="width:auto;">
+                    <option value="en">EN</option>
+                    <option value="ur">اردو</option>
+                </select>
+                <button class="btn btn-ghost btn-icon" onclick="toggleDarkMode()" id="darkModeBtn"><i class="fas fa-moon"></i></button>
+                <div class="avatar" id="userAvatar">A</div>
+            </div>
         </div>
+
+        <!-- APP CONTENT -->
+        <div id="appContent"></div>
+        <div id="printArea"></div>
+    </main>
+</div>
+
+<!-- ===================== MODAL ===================== -->
+<div class="modal-overlay no-print" id="erpModal">
+    <div class="modal glass">
+        <div class="modal-header">
+            <h3 id="modalTitle">Action</h3>
+            <button class="close-btn" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
     </div>
+</div>
 
-    <div class="toast no-print" id="toastNotification"></div>
+<!-- ===================== TOAST ===================== -->
+<div class="toast no-print" id="toastNotification"></div>
 
-    <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
