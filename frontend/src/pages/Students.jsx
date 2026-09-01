@@ -207,10 +207,3 @@ export default function Students() {
     </div>
   );
 }
-            </div>
-          </form>
-        </Modal>
-      )}
-    </div>
-  );
-}
