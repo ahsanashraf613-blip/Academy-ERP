@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import client from '../api/client';
+import { api } from '../api/client';
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -42,7 +42,7 @@ export default function Signup() {
 
     setBusy(true);
     try {
-      await client.post('/auth/signup', {
+      await api.post('/auth/signup', {
         name: formData.name.trim(),
         email: formData.email.trim(),
         password: formData.password,
