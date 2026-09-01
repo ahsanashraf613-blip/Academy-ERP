@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply text-ink;
+  }
+  ::selection {
+    @apply bg-brand-100;
+  }
+  *:focus-visible {
+    outline: 2px solid #3D63DD;
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-slate-200 rounded-md;
+  }
+  .field-label {
+    @apply block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1;
+  }
+  .field-input {
+    @apply w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-ink placeholder-slate-400 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none transition-colors;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded bg-ink px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 transition-colors disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-ink hover:bg-slate-50 transition-colors;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1.5 rounded bg-rose-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-rose-700 transition-colors disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .tab-index {
+    @apply relative pl-3 before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:h-4 before:w-[3px] before:rounded-full before:bg-brand-500;
+  }
+  .stamp {
+    @apply inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[11px] font-mono font-medium uppercase tracking-wide;
+  }
+}
