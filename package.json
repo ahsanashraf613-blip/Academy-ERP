@@ -1,0 +1,24 @@
+{
+  "name": "school-admin",
+  "version": "1.0.0",
+  "description": "Complete School Administration Management System",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
+    "build": "cd frontend && npm run build",
+    "preview": "cd frontend && npm run preview",
+    "seed": "cd backend && npm run seed",
+    "test": "cd backend && npm test"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": "20.x",
+    "npm": "10.x"
+  }
+}
