@@ -40,6 +40,39 @@ const cookieOpts = {
 };
 
 router.post(
+  '/signup',
+  [
+    body('name').isString().trim().isLength({ min: 2 }).withMessage('Name must be at least 2 characters.'),
+    body('email').isEmail().normalizeEmail(),
+    body('password').isString().isLength({ min: 12 }).withMessage('Password must be at least 12 characters.'),
+  ],
+  validationErrorHandler(validationResult),
+  (req, res) => {
+    const { name, email, password } = req.body;
+
+    // Check if email already exists
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered.' });
+    }
+
+    // Create new user with teacher role by default (can be upgraded by admin)
+    const userId = uuidv4();
+    const passwordHash = bcrypt.hashSync(password, 12);
+    db.prepare(
+      `INSERT INTO users (id, name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(userId, name, email, passwordHash, 'teacher', 0); // is_active = 0 (requires admin approval)
+
+    logAction({ userId: null, action: 'signup', entity: 'user', entityId: userId, ip: req.ip });
+
+    res.status(201).json({
+      message: 'Account created! Your account needs admin approval. Please wait for activation.',
+      user: { id: userId, name, email, role: 'teacher' },
+    });
+  }
+);
+
+router.post(
   '/login',
   loginLimiter,
   [body('email').isEmail().normalizeEmail(), body('password').isString().isLength({ min: 1 })],

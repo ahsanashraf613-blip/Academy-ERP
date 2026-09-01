@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -69,6 +69,13 @@ export default function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+
+        <p className="mt-4 text-center text-sm text-slate-600">
+          Don't have an account?{' '}
+          <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-700">
+            Create one
+          </Link>
+        </p>
 
         <p className="mt-4 text-center text-xs text-slate-400">
           Access is limited to authorized school staff. All sign-ins are logged.
