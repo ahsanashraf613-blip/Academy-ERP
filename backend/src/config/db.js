@@ -8,7 +8,6 @@ if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
 const db = new Database(DB_PATH);
 
-// Security & integrity pragmas
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -18,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','teacher','accountant','registrar')),
+  role TEXT NOT NULL CHECK (role IN ('admin','teacher','accountant','registrar','parent')),
   is_active INTEGER NOT NULL DEFAULT 1,
   failed_login_attempts INTEGER NOT NULL DEFAULT 0,
   locked_until TEXT,
@@ -121,6 +120,173 @@ CREATE TABLE IF NOT EXISTS audit_log (
   entity TEXT NOT NULL,
   entity_id TEXT,
   ip_address TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS academic_years (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS classes (
+  id TEXT PRIMARY KEY,
+  academic_year_id TEXT,
+  name TEXT NOT NULL,
+  level TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS sections (
+  id TEXT PRIMARY KEY,
+  class_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  capacity INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS subjects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS class_subjects (
+  id TEXT PRIMARY KEY,
+  class_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  teacher_id TEXT,
+  is_optional INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+  FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS student_documents (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  document_type TEXT,
+  file_name TEXT,
+  file_url TEXT,
+  uploaded_by TEXT,
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS attendance_records (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  class_id TEXT,
+  section_id TEXT,
+  date TEXT NOT NULL,
+  status TEXT NOT NULL,
+  remarks TEXT,
+  marked_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(student_id, date),
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS exams (
+  id TEXT PRIMARY KEY,
+  class_id TEXT,
+  subject_id TEXT,
+  exam_type TEXT,
+  term TEXT,
+  exam_date TEXT,
+  max_marks INTEGER NOT NULL DEFAULT 100,
+  published_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS exam_marks (
+  id TEXT PRIMARY KEY,
+  exam_id TEXT NOT NULL,
+  student_id TEXT NOT NULL,
+  marks_obtained REAL,
+  grade TEXT,
+  remarks TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(exam_id, student_id),
+  FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS fee_structures (
+  id TEXT PRIMARY KEY,
+  academic_year_id TEXT,
+  class_id TEXT,
+  fee_type TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  due_date TEXT,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS fee_invoices_phase1 (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  academic_year_id TEXT,
+  total_amount REAL NOT NULL DEFAULT 0,
+  balance_amount REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  issue_date TEXT NOT NULL DEFAULT (datetime('now')),
+  due_date TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS fee_payments_phase1 (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT,
+  student_id TEXT,
+  amount REAL NOT NULL DEFAULT 0,
+  payment_method TEXT,
+  reference_no TEXT,
+  payment_date TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL DEFAULT 'completed',
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (invoice_id) REFERENCES fee_invoices_phase1(id) ON DELETE SET NULL,
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS fee_ledgers_phase1 (
+  id TEXT PRIMARY KEY,
+  student_id TEXT,
+  invoice_id TEXT,
+  payment_id TEXT,
+  entry_type TEXT,
+  amount REAL,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS parent_student_links (
+  id TEXT PRIMARY KEY,
+  parent_user_id TEXT NOT NULL,
+  student_id TEXT NOT NULL,
+  relation TEXT,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS notices (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  audience TEXT NOT NULL DEFAULT 'all',
+  target_class_id TEXT,
+  created_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
