@@ -23,5 +23,9 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": "24.x",
+    "npm": "10.x"
   }
 }
